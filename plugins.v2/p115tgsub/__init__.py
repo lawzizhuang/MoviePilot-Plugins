@@ -29,7 +29,7 @@ class P115TGSub(_PluginBase):
     plugin_name = "115 TG订阅追更"
     plugin_desc = "读取 MoviePilot 订阅，直接搜索 Telegram 公开频道中的 115 分享资源并补齐缺失内容。"
     plugin_icon = "https://raw.githubusercontent.com/jxxghp/MoviePilot-Plugins/main/icons/cloud.png"
-    plugin_version = "1.0.0"
+    plugin_version = "1.0.1"
     plugin_author = "lawzizhuang"
     author_url = "https://github.com/lawzizhuang/MoviePilot-Plugins"
     plugin_config_prefix = "p115tgsub_"
@@ -196,11 +196,29 @@ class P115TGSub(_PluginBase):
     def _is_subscribe_excluded(self, subscribe_id: int) -> bool:
         return not self._include_subscribes or int(subscribe_id) not in set(self._include_subscribes)
 
+    def stop_service(self) -> None:
+        """停止插件自建的一次性调度器，避免重载后残留任务。"""
+        if self._scheduler:
+            try:
+                self._scheduler.shutdown(wait=False)
+            except Exception as exc:
+                logger.warning(f"停止 115 TG订阅追更调度器失败：{exc}")
+            finally:
+                self._scheduler = None
+
     def get_state(self) -> bool:
         return self._enabled
 
     def get_form(self) -> Tuple[List[dict], Dict[str, Any]]:
         return UIConfig.get_form()
+
+    def get_page(self) -> List[dict]:
+        """返回空数据页；v1.0 的操作入口集中在配置页。"""
+        return []
+
+    def get_api(self) -> List[Dict[str, Any]]:
+        """v1.0 不对外暴露插件 API。"""
+        return []
 
     def get_service(self) -> List[Dict[str, Any]]:
         if not self._enabled:

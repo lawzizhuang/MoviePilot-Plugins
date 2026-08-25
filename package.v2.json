@@ -56,11 +56,12 @@
     "release": true,
     "description": "读取 MoviePilot 订阅，直接搜索 Telegram 公开频道中的 115 分享资源并转存缺失内容。",
     "labels": "订阅,115网盘,Telegram,追更",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "icon": "https://raw.githubusercontent.com/jxxghp/MoviePilot-Plugins/main/icons/cloud.png",
     "author": "lawzizhuang",
     "level": 1,
     "history": {
+      "v1.0.1": "修复：补齐 MoviePilot V2 插件抽象方法，解决在线安装后无法加载配置页的问题。",
       "v1.0.0": "首发：直接检索 Telegram 公开频道及 Telegraph 资源页，仅支持 115 分享链接的订阅追更与转存。"
     }
   }
