@@ -1,0 +1,330 @@
+"""Telegram 公开频道搜索客户端（仅提取 115 分享链接）。"""
+from __future__ import annotations
+
+import html
+import re
+import time
+from dataclasses import dataclass, field
+from html.parser import HTMLParser
+from typing import Any, Dict, Iterable, List, Optional, Sequence
+from urllib.parse import quote, unquote, urlsplit, urlunsplit
+
+import requests
+
+from app.log import logger
+
+
+@dataclass
+class TelegramMessage:
+    """Telegram 公开频道的一条搜索结果。"""
+
+    channel: str
+    message_id: str
+    message_url: str
+    text: str
+    published_at: str = ""
+    links: List[str] = field(default_factory=list)
+    telegraph_links: List[str] = field(default_factory=list)
+
+
+class _TelegramSearchPageParser(HTMLParser):
+    """提取 t.me/s 搜索页中的消息文本和链接，不依赖 BeautifulSoup。"""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.messages: List[Dict[str, Any]] = []
+        self._message: Optional[Dict[str, Any]] = None
+        self._depth = 0
+        self._in_message_text = 0
+        self._in_time = 0
+
+    def handle_starttag(self, tag: str, attrs: Sequence[tuple]) -> None:
+        attrs_map = dict(attrs)
+        css_class = attrs_map.get("class", "")
+        if "tgme_widget_message_wrap" in css_class:
+            self._message = {"text": [], "links": [], "published_at": "", "post": ""}
+            self._depth = 0
+
+        if not self._message:
+            return
+
+        self._depth += 1
+        if tag == "div" and "tgme_widget_message_text" in css_class:
+            self._in_message_text += 1
+        if tag == "time":
+            self._in_time += 1
+            self._message["published_at"] = attrs_map.get("datetime", "")
+        if tag == "a":
+            href = attrs_map.get("href", "").strip()
+            if href:
+                self._message["links"].append(href)
+        if "tgme_widget_message" in css_class and attrs_map.get("data-post"):
+            self._message["post"] = attrs_map["data-post"]
+
+    def handle_data(self, data: str) -> None:
+        if self._message and self._in_message_text:
+            self._message["text"].append(data)
+
+    def handle_endtag(self, tag: str) -> None:
+        if not self._message:
+            return
+        if tag == "div" and self._in_message_text:
+            self._in_message_text -= 1
+        if tag == "time" and self._in_time:
+            self._in_time -= 1
+        self._depth -= 1
+        if self._depth == 0:
+            self.messages.append(self._message)
+            self._message = None
+
+
+class _PageTextAndLinksParser(HTMLParser):
+    """提取 Telegraph 正文的可见文本和全部链接。"""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.text_parts: List[str] = []
+        self.links: List[str] = []
+
+    def handle_starttag(self, tag: str, attrs: Sequence[tuple]) -> None:
+        if tag == "a":
+            href = dict(attrs).get("href", "").strip()
+            if href:
+                self.links.append(href)
+
+    def handle_data(self, data: str) -> None:
+        self.text_parts.append(data)
+
+
+class TelegramWebClient:
+    """经 Telegram 公开网页检索频道，并只返回 115 分享候选。"""
+
+    USER_AGENT = (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131 Safari/537.36"
+    )
+    _115_HOSTS = {"115.com", "115cdn.com", "anxia.com"}
+    _URL_RE = re.compile(r"https?://[^\s<>\"'，。；;]+", re.IGNORECASE)
+    _TRAILING_URL_CHARS = ".,，。;；:：!！?？)]}〉》\"'"
+
+    def __init__(
+        self,
+        channels: Iterable[str],
+        proxy: Any = None,
+        timeout: int = 20,
+        max_results_per_channel: int = 10,
+        max_telegraph_pages: int = 3,
+        telegraph_delay: float = 0.5,
+    ) -> None:
+        self.channels = self.normalize_channels(channels)
+        self.timeout = max(5, min(int(timeout or 20), 60))
+        self.max_results_per_channel = max(1, min(int(max_results_per_channel or 10), 20))
+        self.max_telegraph_pages = max(0, min(int(max_telegraph_pages or 3), 10))
+        self.telegraph_delay = max(0.0, min(float(telegraph_delay or 0), 5.0))
+        self._api_call_count = 0
+        self._proxies = proxy if isinstance(proxy, dict) else ({"http": proxy, "https": proxy} if proxy else None)
+        self._session = requests.Session()
+        self._session.headers.update({"User-Agent": self.USER_AGENT, "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8"})
+
+    @staticmethod
+    def normalize_channels(channels: Iterable[str]) -> List[str]:
+        """接受用户名、t.me URL 或每行一个频道的文本，返回去重用户名。"""
+        if isinstance(channels, str):
+            values = re.split(r"[\n,，]+", channels)
+        else:
+            values = list(channels or [])
+
+        normalized: List[str] = []
+        for raw in values:
+            value = str(raw or "").strip()
+            if not value or value.startswith("#"):
+                continue
+            value = value.rstrip("/")
+            if value.startswith("@"):
+                value = value[1:]
+            parsed = urlsplit(value if "://" in value else f"https://t.me/{value}")
+            if parsed.netloc.lower() in {"t.me", "www.t.me", "telegram.me", "www.telegram.me"}:
+                parts = [unquote(part) for part in parsed.path.split("/") if part]
+                if parts and parts[0].lower() == "s":
+                    parts = parts[1:]
+                value = parts[0] if parts else ""
+            if re.fullmatch(r"[A-Za-z0-9_]{5,64}", value or "") and value.lower() not in {item.lower() for item in normalized}:
+                normalized.append(value)
+        return normalized
+
+    @classmethod
+    def _is_115_url(cls, url: str) -> bool:
+        try:
+            host = urlsplit(url).hostname or ""
+            host = host.lower()
+            return any(host == allowed or host.endswith(f".{allowed}") for allowed in cls._115_HOSTS)
+        except Exception:
+            return False
+
+    @classmethod
+    def _is_telegraph_url(cls, url: str) -> bool:
+        try:
+            host = (urlsplit(url).hostname or "").lower()
+            return host == "telegra.ph" or host.endswith(".telegra.ph")
+        except Exception:
+            return False
+
+    @classmethod
+    def _clean_url(cls, url: str) -> str:
+        value = html.unescape(str(url or "").strip()).strip(cls._TRAILING_URL_CHARS)
+        if "#" in value:
+            value = value.split("#", 1)[0]
+        return value.rstrip("&")
+
+    @classmethod
+    def _extract_urls(cls, text: str, links: Iterable[str] = ()) -> List[str]:
+        candidates = list(links or []) + cls._URL_RE.findall(html.unescape(text or ""))
+        output: List[str] = []
+        seen = set()
+        for raw in candidates:
+            url = cls._clean_url(raw)
+            if not cls._is_115_url(url):
+                continue
+            key = url.lower()
+            if key not in seen:
+                seen.add(key)
+                output.append(url)
+        return output
+
+    @classmethod
+    def _extract_telegraph_urls(cls, links: Iterable[str]) -> List[str]:
+        output: List[str] = []
+        seen = set()
+        for raw in links or []:
+            url = cls._clean_url(raw)
+            if cls._is_telegraph_url(url) and url.lower() not in seen:
+                seen.add(url.lower())
+                output.append(url)
+        return output
+
+    def reset_api_call_count(self) -> None:
+        self._api_call_count = 0
+
+    def _get(self, url: str) -> Optional[str]:
+        try:
+            self._api_call_count += 1
+            response = self._session.get(url, timeout=self.timeout, proxies=self._proxies)
+            if response.status_code != 200:
+                logger.warning(f"Telegram 公开页请求失败：HTTP {response.status_code} - {url}")
+                return None
+            return response.text
+        except requests.RequestException as exc:
+            logger.warning(f"Telegram 公开页请求失败：{exc}")
+            return None
+
+    @staticmethod
+    def _message_url(channel: str, post: str) -> str:
+        parts = [part for part in str(post or "").split("/") if part]
+        message_id = parts[-1] if parts else ""
+        return f"https://t.me/{channel}/{message_id}" if message_id else f"https://t.me/{channel}"
+
+    def search_messages(self, channel: str, keyword: str) -> List[TelegramMessage]:
+        """从一个公开频道的搜索页面提取消息；不执行 Telegraph 二跳。"""
+        channel = self.normalize_channels([channel])[0] if self.normalize_channels([channel]) else ""
+        keyword = str(keyword or "").strip()
+        if not channel or not keyword:
+            return []
+
+        url = f"https://t.me/s/{quote(channel, safe='_')}?q={quote(keyword)}"
+        page = self._get(url)
+        if not page:
+            return []
+
+        parser = _TelegramSearchPageParser()
+        try:
+            parser.feed(page)
+            parser.close()
+        except Exception as exc:
+            logger.warning(f"解析 Telegram 频道 {channel} 搜索页失败：{exc}")
+            return []
+
+        messages: List[TelegramMessage] = []
+        for raw in parser.messages[: self.max_results_per_channel]:
+            post = str(raw.get("post") or "")
+            message_id = post.rsplit("/", 1)[-1] if "/" in post else ""
+            links = [self._clean_url(item) for item in raw.get("links") or []]
+            text = " ".join("".join(raw.get("text") or []).split())
+            messages.append(TelegramMessage(
+                channel=channel,
+                message_id=message_id,
+                message_url=self._message_url(channel, post),
+                text=text,
+                published_at=str(raw.get("published_at") or ""),
+                links=links,
+                telegraph_links=self._extract_telegraph_urls(links),
+            ))
+        return messages
+
+    def _extract_telegraph_115_links(self, url: str) -> List[str]:
+        page = self._get(url)
+        if not page:
+            return []
+        parser = _PageTextAndLinksParser()
+        try:
+            parser.feed(page)
+            parser.close()
+        except Exception as exc:
+            logger.warning(f"解析 Telegraph 资源页失败：{exc}")
+            return []
+        text = " ".join("".join(parser.text_parts).split())
+        return self._extract_urls(text, parser.links)
+
+    @staticmethod
+    def _message_matches_keyword(message: TelegramMessage, keyword: str) -> bool:
+        """Telegraph 二跳前先确认消息文本包含搜索关键词，避免无关页面请求。"""
+        expected = re.sub(r"[\W_]+", "", str(keyword or "").casefold())
+        actual = re.sub(r"[\W_]+", "", str(message.text or "").casefold())
+        return len(expected) >= 2 and expected in actual
+
+    def search_115_resources(self, keyword: str) -> List[Dict[str, str]]:
+        """搜索所有已配置频道，返回统一的 115 资源格式。"""
+        if not self.channels:
+            logger.warning("Telegram 搜索源未配置公开频道")
+            return []
+
+        results: List[Dict[str, str]] = []
+        seen_share_urls = set()
+        for channel in self.channels:
+            messages = self.search_messages(channel, keyword)
+            if not messages:
+                logger.info(f"Telegram 频道 {channel} 未找到关键词“{keyword}”的消息")
+                continue
+
+            telegraph_used = 0
+            for message in messages:
+                direct_links = self._extract_urls(message.text, message.links)
+                if (
+                    not direct_links
+                    and message.telegraph_links
+                    and self._message_matches_keyword(message, keyword)
+                    and telegraph_used < self.max_telegraph_pages
+                ):
+                    for telegraph_url in message.telegraph_links:
+                        if telegraph_used >= self.max_telegraph_pages:
+                            break
+                        telegraph_used += 1
+                        direct_links.extend(self._extract_telegraph_115_links(telegraph_url))
+                        if self.telegraph_delay:
+                            time.sleep(self.telegraph_delay)
+
+                for share_url in direct_links:
+                    normalized_url = self._clean_url(share_url)
+                    if normalized_url.lower() in seen_share_urls:
+                        continue
+                    seen_share_urls.add(normalized_url.lower())
+                    results.append({
+                        "url": normalized_url,
+                        "title": message.text or keyword,
+                        "update_time": message.published_at,
+                        "channel": message.channel,
+                        "message_id": message.message_id,
+                        "message_url": message.message_url,
+                    })
+
+        logger.info(f"Telegram 公开频道搜索“{keyword}”完成，找到 {len(results)} 个 115 分享链接")
+        return results

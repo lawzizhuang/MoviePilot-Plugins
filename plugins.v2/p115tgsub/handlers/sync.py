@@ -3,6 +3,8 @@
 负责核心的同步逻辑：处理电影订阅、处理电视剧订阅
 """
 import datetime
+import re
+import unicodedata
 from typing import List, Dict, Any, Set, Optional, Callable
 
 from app.core.config import global_vars
@@ -38,7 +40,8 @@ class SyncHandler:
         notify: bool = False,
         post_message_func: Callable = None,
         get_data_func: Callable = None,
-        save_data_func: Callable = None
+        save_data_func: Callable = None,
+        dry_run: bool = False
     ):
         """
         初始化同步处理器
@@ -56,6 +59,7 @@ class SyncHandler:
         :param post_message_func: 发送消息的函数
         :param get_data_func: 获取数据的函数
         :param save_data_func: 保存数据的函数
+        :param dry_run: 仅验证分享与文件匹配，不实际转存或修改订阅
         """
         self._p115_manager = p115_manager
         self._search_handler = search_handler
@@ -70,6 +74,23 @@ class SyncHandler:
         self._post_message = post_message_func
         self._get_data = get_data_func
         self._save_data = save_data_func
+        self._dry_run = bool(dry_run)
+
+    @staticmethod
+    def _resource_title_matches(mediainfo: MediaInfo, resource_title: str) -> bool:
+        """仅接受消息文本明确包含当前订阅标题的候选，避免搜索页模糊命中。"""
+        title = str(getattr(mediainfo, "title", "") or "").strip()
+        text = str(resource_title or "").strip()
+        if not title or not text:
+            return False
+
+        def compact(value: str) -> str:
+            normalized = unicodedata.normalize("NFKC", value).casefold()
+            return re.sub(r"[\s\W_]+", "", normalized)
+
+        expected = compact(title)
+        actual = compact(text)
+        return len(expected) >= 2 and expected in actual
 
     def process_movie_subscribe(
         self,
@@ -167,35 +188,22 @@ class SyncHandler:
                 share_url = resource.get("url", "")
                 resource_title = resource.get("title", "")
 
-                # 检查是否是刚搜索出尚未真正解锁的延期解锁 HDHive 资源
-                if resource.get("need_unlock") and not share_url:
-                    slug = resource.get("slug")
-                    if slug:
-                        logger.info(f"遇到需要解锁的收费资源 {resource_title} (slug: {slug})，尝试消耗积分解锁...")
-                        unlocked_url = self._search_handler.unlock_hdhive_resource(slug, resource.get("unlock_points", 0))
-                        if not unlocked_url:
-                            logger.error(f"未能解锁收费资源: {resource_title}")
-                            continue
-                        share_url = unlocked_url
-                        # 更新当前字典以便历史存入或下次能沿用这个 url
-                        resource["url"] = share_url
-                        resource["need_unlock"] = False
-
-                if not share_url:
+                if not self._resource_title_matches(mediainfo, resource_title):
+                    logger.info(f"跳过标题未明确匹配当前订阅的 Telegram 候选：{resource_title[:120]}")
                     continue
 
-                logger.info(f"检查分享：{resource_title} - {share_url}")
+                logger.info(f"检查 115 分享：{resource_title[:120]}")
 
                 try:
                     # 先检查分享链接是否有效
                     share_status = self._p115_manager.check_share_status(share_url)
                     if not share_status.is_valid:
-                        logger.warning(f"分享链接无效：{share_url}，原因：{share_status.status_text}")
+                        logger.warning(f"115 分享链接无效：{share_status.status_text}")
                         continue
 
                     share_files = self._p115_manager.list_share_files(share_url)
                     if not share_files:
-                        logger.info(f"分享链接无内容：{share_url}")
+                        logger.info("115 分享链接无内容")
                         continue
 
                     # 匹配电影文件
@@ -224,7 +232,10 @@ class SyncHandler:
                         save_dir = f"{self._movie_save_path}/{mediainfo.title} ({mediainfo.year})" if mediainfo.year else f"{self._movie_save_path}/{mediainfo.title}"
                         logger.info(f"转存目标路径: {save_dir}")
 
-                        # 执行转存
+                        # 执行转存（测试模式只验证到文件匹配）
+                        if self._dry_run:
+                            logger.info(f"测试模式：已验证电影候选，不执行转存：{file_name}")
+                            continue
                         success = self._p115_manager.transfer_file(
                             share_url=share_url,
                             file_id=matched_file.get("id"),
@@ -278,7 +289,7 @@ class SyncHandler:
                                     torrent_name=resource_title,
                                     torrent_description=file_name,
                                     torrent_site="115网盘",
-                                    username="P115StrgmSubLocal",
+                                    username="P115TGSub",
                                     date=datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                                     note={"source": f"Subscribe|{subscribe.name}", "share_url": share_url}
                                 )
@@ -299,7 +310,7 @@ class SyncHandler:
                             logger.error(f"转存失败：{mediainfo.title}")
 
                 except Exception as e:
-                    logger.error(f"处理分享链接出错：{share_url}, 错误：{str(e)}")
+                    logger.error(f"处理 115 分享链接出错：{str(e)}")
                     continue
 
         except Exception as e:
@@ -569,30 +580,17 @@ class SyncHandler:
                     share_url = resource.get("url", "")
                     resource_title = resource.get("title", "")
 
-                    # 检查是否是刚搜索出尚未真正解锁的延期解锁 HDHive 资源
-                    if resource.get("need_unlock") and not share_url:
-                        slug = resource.get("slug")
-                        if slug:
-                            logger.info(f"遇到需要解锁的收费资源 {resource_title} (slug: {slug})，尝试消耗积分解锁...")
-                            unlocked_url = self._search_handler.unlock_hdhive_resource(slug, resource.get("unlock_points", 0))
-                            if not unlocked_url:
-                                logger.error(f"未能解锁收费资源: {resource_title}")
-                                continue
-                            share_url = unlocked_url
-                            # 更新当前字典以便存入历史或记录这个 url
-                            resource["url"] = share_url
-                            resource["need_unlock"] = False
-
-                    if not share_url:
+                    if not self._resource_title_matches(mediainfo, resource_title):
+                        logger.info(f"跳过标题未明确匹配当前订阅的 Telegram 候选：{resource_title[:120]}")
                         continue
 
-                    logger.info(f"检查分享：{resource_title} - {share_url}")
+                    logger.info(f"检查 115 分享：{resource_title[:120]}")
 
                     try:
                         # 检查分享链接是否有效
                         share_status = self._p115_manager.check_share_status(share_url)
                         if not share_status.is_valid:
-                            logger.warning(f"分享链接无效：{share_url}，原因：{share_status.status_text}")
+                            logger.warning(f"115 分享链接无效：{share_status.status_text}")
                             continue
 
                         # 列出分享内容
@@ -601,7 +599,7 @@ class SyncHandler:
                             target_season=(season if self._skip_other_season_dirs else None)
                         )
                         if not share_files:
-                            logger.info(f"分享链接无内容：{share_url}")
+                            logger.info("115 分享链接无内容")
                             continue
 
                         logger.info(f"分享包含 {len(share_files)} 个文件/目录")
@@ -653,10 +651,15 @@ class SyncHandler:
                             logger.info(f"匹配 {len(matched_items)} 集，但受配额限制仅转存 {remaining_quota} 集")
                             matched_items = matched_items[:remaining_quota]
 
-                        # 批量转存
+                        # 批量转存（测试模式只报告已匹配的集数）
+                        if self._dry_run:
+                            logger.info(
+                                f"测试模式：已验证 {mediainfo.title} S{season:02d} "
+                                f"候选集数 {[item['episode'] for item in matched_items]}，不执行转存"
+                            )
+                            continue
                         file_ids = [item["file"]["id"] for item in matched_items]
                         logger.info(f"准备批量转存 {len(file_ids)} 个文件到: {save_dir}")
-
                         success_ids, failed_ids = self._p115_manager.transfer_files_batch(
                             share_url=share_url,
                             file_ids=file_ids,
@@ -747,7 +750,7 @@ class SyncHandler:
                                     download_hash=share_url,
                                     torrent_name=resource_title,
                                     torrent_site="115网盘",
-                                    username="P115StrgmSubLocal",
+                                    username="P115TGSub",
                                     date=datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                                     note={"source": f"Subscribe|{subscribe.name}", "share_url": share_url}
                                 )
@@ -759,7 +762,7 @@ class SyncHandler:
                             break
 
                     except Exception as e:
-                        logger.error(f"处理分享链接出错：{share_url}, 错误：{str(e)}")
+                        logger.error(f"处理 115 分享链接出错：{str(e)}")
                         continue
 
                 # 当前源处理完成
