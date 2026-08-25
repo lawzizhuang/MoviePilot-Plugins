@@ -102,7 +102,14 @@ class SyncHandler:
 
         expected = compact(title)
         actual = compact(text)
-        return len(expected) >= 2 and expected in actual
+        if len(expected) >= 2 and expected in actual:
+            return True
+
+        # 单字剧名（如“蝉”）经过 \W 清理时会被 Python 正则当作非单词字符移除，
+        # 因而不能使用 compact 后的包含判断；改为在 NFKC 标准化原文中做字面匹配。
+        normalized_title = unicodedata.normalize("NFKC", title).casefold()
+        normalized_text = unicodedata.normalize("NFKC", text).casefold()
+        return len(normalized_title) == 1 and normalized_title in normalized_text
 
     def process_movie_subscribe(
         self,
