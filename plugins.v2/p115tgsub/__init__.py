@@ -30,7 +30,7 @@ class P115TGSub(_PluginBase):
     plugin_name = "115 TG订阅追更"
     plugin_desc = "读取 MoviePilot 订阅，直接搜索 Telegram 公开频道中的 115 分享资源并补齐缺失内容。"
     plugin_icon = "https://raw.githubusercontent.com/jxxghp/MoviePilot-Plugins/main/icons/cloud.png"
-    plugin_version = "1.1.2"
+    plugin_version = "1.1.3"
     plugin_author = "lawzizhuang"
     author_url = "https://github.com/lawzizhuang/MoviePilot-Plugins"
     plugin_config_prefix = "p115tgsub_"

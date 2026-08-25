@@ -88,7 +88,32 @@ def test_mixed_cloud_links_only_keep_115():
     ) == ["https://115.com/s/xyz?password=1234"]
 
 
+def test_parser_keeps_multiple_messages_with_void_tags():
+    html = '''
+    <div class="tgme_widget_message_wrap">
+      <div class="tgme_widget_message" data-post="QukanMovie/10">
+        <div class="tgme_widget_message_text">第一条 <a href="https://115.com/s/one">资源</a><img src="cover.jpg"></div>
+      </div>
+    </div>
+    <div class="tgme_widget_message_wrap">
+      <div class="tgme_widget_message" data-post="QukanMovie/11">
+        <div class="tgme_widget_message_text">第二条 <a href="https://115.com/s/two">资源</a></div>
+      </div>
+    </div>
+    '''
+    parser = telegram_web._TelegramSearchPageParser()
+    parser.feed(html)
+    parser.close()
+
+    assert [item["post"] for item in parser.messages] == ["QukanMovie/10", "QukanMovie/11"]
+    assert [item["links"] for item in parser.messages] == [
+        ["https://115.com/s/one"],
+        ["https://115.com/s/two"],
+    ]
+
+
 if __name__ == "__main__":
     test_direct_and_telegraph_115_links_are_extracted()
     test_mixed_cloud_links_only_keep_115()
+    test_parser_keeps_multiple_messages_with_void_tags()
     print("telegram_web parser tests: OK")

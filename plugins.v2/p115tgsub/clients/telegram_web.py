@@ -30,6 +30,11 @@ class TelegramMessage:
 class _TelegramSearchPageParser(HTMLParser):
     """提取 t.me/s 搜索页中的消息文本和链接，不依赖 BeautifulSoup。"""
 
+    _VOID_TAGS = {
+        "area", "base", "br", "col", "embed", "hr", "img", "input", "link",
+        "meta", "param", "source", "track", "wbr",
+    }
+
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
         self.messages: List[Dict[str, Any]] = []
@@ -41,14 +46,24 @@ class _TelegramSearchPageParser(HTMLParser):
     def handle_starttag(self, tag: str, attrs: Sequence[tuple]) -> None:
         attrs_map = dict(attrs)
         css_class = attrs_map.get("class", "")
-        if "tgme_widget_message_wrap" in css_class:
-            self._message = {"text": [], "links": [], "published_at": "", "post": ""}
-            self._depth = 0
+
+        # 以带 data-post 的消息本体为边界，不能以 wrapper 或普通标签计数。
+        # Telegram 消息中常有 <img> 等无闭合标签；旧实现会使深度无法归零，
+        # 进而丢掉前面的搜索结果，只保留最后一条。
+        if tag == "div" and "tgme_widget_message" in css_class and attrs_map.get("data-post"):
+            if self._message:
+                self.messages.append(self._message)
+            self._message = {"text": [], "links": [], "published_at": "", "post": attrs_map["data-post"]}
+            self._depth = 1
+            self._in_message_text = 0
+            self._in_time = 0
+            return
 
         if not self._message:
             return
 
-        self._depth += 1
+        if tag not in self._VOID_TAGS:
+            self._depth += 1
         if tag == "div" and "tgme_widget_message_text" in css_class:
             self._in_message_text += 1
         if tag == "time":
@@ -58,8 +73,10 @@ class _TelegramSearchPageParser(HTMLParser):
             href = attrs_map.get("href", "").strip()
             if href:
                 self._message["links"].append(href)
-        if "tgme_widget_message" in css_class and attrs_map.get("data-post"):
-            self._message["post"] = attrs_map["data-post"]
+
+    def handle_startendtag(self, tag: str, attrs: Sequence[tuple]) -> None:
+        """自闭合标签不应参与消息容器深度计算。"""
+        self.handle_starttag(tag, attrs)
 
     def handle_data(self, data: str) -> None:
         if self._message and self._in_message_text:
@@ -72,8 +89,17 @@ class _TelegramSearchPageParser(HTMLParser):
             self._in_message_text -= 1
         if tag == "time" and self._in_time:
             self._in_time -= 1
+        if tag in self._VOID_TAGS:
+            return
         self._depth -= 1
         if self._depth == 0:
+            self.messages.append(self._message)
+            self._message = None
+
+    def close(self) -> None:
+        super().close()
+        # 页面截断或异常 HTML 时尽量保留已开始解析的最后一条消息。
+        if self._message:
             self.messages.append(self._message)
             self._message = None
 
