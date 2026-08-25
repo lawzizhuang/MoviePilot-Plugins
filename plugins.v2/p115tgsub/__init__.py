@@ -1,7 +1,7 @@
 """115 Telegram 公开频道订阅追更插件。"""
 import datetime
 from pathlib import Path
-from threading import Lock
+from threading import Lock, Thread
 from typing import Any, Dict, List, Optional, Tuple
 
 import pytz
@@ -21,6 +21,7 @@ from .handlers import SearchHandler, SubscribeHandler, SyncHandler
 from .ui import UIConfig
 
 lock = Lock()
+run_state_lock = Lock()
 
 
 class P115TGSub(_PluginBase):
@@ -29,7 +30,7 @@ class P115TGSub(_PluginBase):
     plugin_name = "115 TG订阅追更"
     plugin_desc = "读取 MoviePilot 订阅，直接搜索 Telegram 公开频道中的 115 分享资源并补齐缺失内容。"
     plugin_icon = "https://raw.githubusercontent.com/jxxghp/MoviePilot-Plugins/main/icons/cloud.png"
-    plugin_version = "1.0.1"
+    plugin_version = "1.1.0"
     plugin_author = "lawzizhuang"
     author_url = "https://github.com/lawzizhuang/MoviePilot-Plugins"
     plugin_config_prefix = "p115tgsub_"
@@ -40,6 +41,7 @@ class P115TGSub(_PluginBase):
     _notify = True
     _onlyonce = False
     _cron = "30 */8 * * *"
+    _cookie_source = "p115disk"
     _cookies = ""
     _save_path = "/我的接收/MoviePilot-TG/TV"
     _movie_save_path = "/我的接收/MoviePilot-TG/Movie"
@@ -52,7 +54,8 @@ class P115TGSub(_PluginBase):
     _batch_size = 10
     _skip_other_season_dirs = True
     _dry_run = True
-    _include_subscribes: List[int] = []
+    _sync_running = False
+    _run_requested = False
 
     _scheduler: Optional[BackgroundScheduler] = None
     _telegram_client: Optional[TelegramWebClient] = None
@@ -106,6 +109,9 @@ class P115TGSub(_PluginBase):
             logger.warning(f"Cron 间隔必须不少于 {self._MIN_INTERVAL_HOURS} 小时，已使用默认值 30 */8 * * *")
             self._cron = "30 */8 * * *"
 
+        self._cookie_source = str(config.get("cookie_source", "p115disk") or "p115disk").strip().lower()
+        if self._cookie_source not in {"p115disk", "local"}:
+            self._cookie_source = "p115disk"
         self._cookies = str(config.get("cookies", "") or "").strip()
         self._save_path = str(config.get("save_path", self._save_path) or self._save_path).strip()
         self._movie_save_path = str(config.get("movie_save_path", self._movie_save_path) or self._movie_save_path).strip()
@@ -119,9 +125,6 @@ class P115TGSub(_PluginBase):
         self._skip_other_season_dirs = bool(config.get("skip_other_season_dirs", True))
         self._dry_run = bool(config.get("dry_run", True))
         try:
-            raw_subscribes = config.get("include_subscribes", []) or []
-            self._include_subscribes = [int(item) for item in raw_subscribes if str(item).strip().isdigit()]
-
             self._init_clients()
             self._init_handlers()
         except Exception as exc:
@@ -145,6 +148,22 @@ class P115TGSub(_PluginBase):
             )
             self._scheduler.start()
 
+    def _resolve_p115_cookie(self) -> str:
+        """按配置获取 115 Cookie；默认只复用 P115Disk 的持久化配置。"""
+        if self._cookie_source == "local":
+            return self._cookies
+
+        p115disk_config = self.get_config("P115Disk") or {}
+        if not isinstance(p115disk_config, dict):
+            logger.error("读取 115网盘储存（P115Disk）配置失败")
+            return ""
+        cookie = str(p115disk_config.get("cookie", "") or "").strip()
+        if not cookie:
+            logger.error("未在 115网盘储存（P115Disk）中找到有效 Cookie；请先完成其配置，或将凭据来源切换为“本插件独立 Cookie”")
+            return ""
+        logger.info("115 TG订阅追更已复用 115网盘储存（P115Disk）的 Cookie 配置")
+        return cookie
+
     def _init_clients(self) -> None:
         proxy = settings.PROXY
         self._telegram_client = TelegramWebClient(
@@ -156,14 +175,15 @@ class P115TGSub(_PluginBase):
         )
         if self._telegram_enabled and not self._telegram_client.channels:
             logger.warning("Telegram 搜索已启用但未配置有效公开频道")
-        if self._cookies:
-            self._p115_manager = P115ClientManager(cookies=self._cookies)
+        cookies = self._resolve_p115_cookie()
+        if cookies:
+            self._p115_manager = P115ClientManager(cookies=cookies)
         else:
             self._p115_manager = None
 
     def _init_handlers(self) -> None:
         self._search_handler = SearchHandler(self._telegram_client, self._telegram_enabled)
-        self._subscribe_handler = SubscribeHandler(is_excluded_func=self._is_subscribe_excluded)
+        self._subscribe_handler = SubscribeHandler()
         self._sync_handler = SyncHandler(
             p115_manager=self._p115_manager,
             search_handler=self._search_handler,
@@ -184,17 +204,13 @@ class P115TGSub(_PluginBase):
     def _config_snapshot(self) -> Dict[str, Any]:
         return {
             "enabled": self._enabled, "notify": self._notify, "onlyonce": self._onlyonce, "cron": self._cron,
-            "cookies": self._cookies, "save_path": self._save_path, "movie_save_path": self._movie_save_path,
+            "cookie_source": self._cookie_source, "cookies": self._cookies, "save_path": self._save_path, "movie_save_path": self._movie_save_path,
             "telegram_enabled": self._telegram_enabled, "telegram_channels": self._telegram_channels,
             "telegram_timeout": self._telegram_timeout, "telegram_max_results": self._telegram_max_results,
             "telegram_max_telegraph_pages": self._telegram_max_telegraph_pages,
             "max_transfer_per_sync": self._max_transfer_per_sync, "batch_size": self._batch_size,
             "skip_other_season_dirs": self._skip_other_season_dirs, "dry_run": self._dry_run,
-            "include_subscribes": self._include_subscribes,
         }
-
-    def _is_subscribe_excluded(self, subscribe_id: int) -> bool:
-        return not self._include_subscribes or int(subscribe_id) not in set(self._include_subscribes)
 
     def stop_service(self) -> None:
         """停止插件自建的一次性调度器，避免重载后残留任务。"""
@@ -213,12 +229,24 @@ class P115TGSub(_PluginBase):
         return UIConfig.get_form()
 
     def get_page(self) -> List[dict]:
-        """返回空数据页；v1.0 的操作入口集中在配置页。"""
-        return []
+        """提供插件详情页操作入口与最近转存记录。"""
+        return UIConfig.get_page(self.get_data("history") or [])
 
     def get_api(self) -> List[Dict[str, Any]]:
-        """v1.0 不对外暴露插件 API。"""
-        return []
+        return [
+            {
+                "path": "/run_once",
+                "endpoint": self.api_run_once,
+                "methods": ["POST"],
+                "summary": "立即执行一次 115 TG订阅追更",
+            },
+            {
+                "path": "/clear_plugin_log",
+                "endpoint": self.api_clear_plugin_log,
+                "methods": ["POST"],
+                "summary": "清理 115 TG订阅追更插件日志",
+            },
+        ]
 
     def get_service(self) -> List[Dict[str, Any]]:
         if not self._enabled:
@@ -255,10 +283,11 @@ class P115TGSub(_PluginBase):
 
         with SessionFactory() as db:
             subscribes = SubscribeOper(db=db).list("N,R") or []
-        selected = [item for item in subscribes if not self._is_subscribe_excluded(item.id)]
-        if not selected:
-            logger.warning("未选择任何订阅；v1.0 指定模式下请至少勾选一项测试订阅")
+        if not subscribes:
+            logger.warning("当前没有待处理的 MoviePilot 订阅")
             return True
+
+        logger.info(f"开始处理 {len(subscribes)} 个 MoviePilot 待处理订阅")
 
         try:
             self._telegram_client.reset_api_call_count()
@@ -269,7 +298,7 @@ class P115TGSub(_PluginBase):
         history = self.get_data("history") or []
         transfer_details: List[Dict[str, Any]] = []
         transferred_count = 0
-        for subscribe in selected:
+        for subscribe in subscribes:
             if subscribe.type == MediaType.MOVIE.value:
                 transferred_count = self._sync_handler.process_movie_subscribe(subscribe, history, transfer_details, transferred_count)
             elif subscribe.type == MediaType.TV.value:
@@ -286,12 +315,62 @@ class P115TGSub(_PluginBase):
                 self.post_message(mtype=NotificationType.Plugin, title="【115 TG订阅追更】执行完成", text="本次未发现可转存的匹配资源。")
         return True
 
-    def sync_subscribes(self) -> None:
-        with lock:
-            try:
-                self._do_sync()
-            except Exception as exc:
-                logger.error(f"115 TG订阅追更任务异常：{exc}")
+    def _run_sync_exclusive(self) -> bool:
+        """串行执行同步，避免定时、远程命令和页面操作并发转存。"""
+        with run_state_lock:
+            if self._sync_running:
+                logger.warning("115 TG订阅追更任务正在执行，忽略重复触发")
+                return False
+            self._sync_running = True
+        try:
+            with lock:
+                return self._do_sync()
+        except Exception as exc:
+            logger.error(f"115 TG订阅追更任务异常：{exc}")
+            return False
+        finally:
+            with run_state_lock:
+                self._sync_running = False
+
+    def sync_subscribes(self) -> bool:
+        return self._run_sync_exclusive()
+
+    def _run_queued_once(self) -> None:
+        with run_state_lock:
+            self._run_requested = False
+        self._run_sync_exclusive()
+
+    def api_run_once(self, apikey: str) -> Dict[str, Any]:
+        """页面按钮入口：异步排队，避免 HTTP 请求等待完整同步任务。"""
+        if apikey != settings.API_TOKEN:
+            return {"success": False, "message": "API密钥错误"}
+        with run_state_lock:
+            if self._sync_running or self._run_requested:
+                return {"success": False, "message": "任务正在执行或已排队，请稍后查看插件日志"}
+            self._run_requested = True
+        Thread(target=self._run_queued_once, name="P115TGSubRunOnce", daemon=True).start()
+        return {"success": True, "message": "任务已开始执行，请查看插件日志"}
+
+    def api_clear_plugin_log(self, apikey: str) -> Dict[str, Any]:
+        """仅清理本插件当前及滚动日志，不影响 MoviePilot 主日志或其他插件。"""
+        if apikey != settings.API_TOKEN:
+            return {"success": False, "message": "API密钥错误"}
+        log_dir = settings.LOG_PATH / "plugins"
+        try:
+            removed = 0
+            current_log = log_dir / "p115tgsub.log"
+            if current_log.is_file():
+                # 当前日志可能仍由 MoviePilot 的异步处理器持有；截断而不删除，避免后续日志写入已删除的文件描述符。
+                current_log.write_text("", encoding="utf-8")
+                removed += 1
+            for path in log_dir.glob("p115tgsub.log.*"):
+                if path.is_file():
+                    path.unlink()
+                    removed += 1
+            return {"success": True, "message": f"已清理 {removed} 个插件日志文件"}
+        except OSError as exc:
+            logger.error(f"清理 115 TG订阅追更插件日志失败：{exc}")
+            return {"success": False, "message": f"清理失败：{exc}"}
 
     @eventmanager.register(EventType.PluginAction)
     def remote_sync(self, event: Event):

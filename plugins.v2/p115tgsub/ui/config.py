@@ -1,34 +1,12 @@
-"""115 TG 订阅追更插件配置页面。"""
+"""115 TG 订阅追更插件配置与操作页面。"""
 from typing import Any, Dict, List, Tuple
 
-from app.db.subscribe_oper import SubscribeOper
-from app.db import SessionFactory
-from app.log import logger
-from app.schemas.types import MediaType
+from app.core.config import settings
 
 
 class UIConfig:
     @staticmethod
-    def get_subscribe_options() -> List[Dict[str, Any]]:
-        try:
-            with SessionFactory() as db:
-                subscribes = SubscribeOper(db=db).list("N,R")
-            options = []
-            for item in subscribes or []:
-                kind = "[剧]" if item.type == MediaType.TV.value else "[影]"
-                if item.type == MediaType.TV.value:
-                    label = f"{kind} {item.name} ({item.year or ''}) S{item.season or 1}".strip()
-                else:
-                    label = f"{kind} {item.name} ({item.year or ''})".strip()
-                options.append({"title": label, "value": item.id})
-            return options
-        except Exception as exc:
-            logger.warning(f"获取订阅列表失败：{exc}")
-            return []
-
-    @staticmethod
     def get_form() -> Tuple[List[dict], Dict[str, Any]]:
-        subscribe_options = UIConfig.get_subscribe_options()
         form = [{
             "component": "VForm",
             "content": [
@@ -38,7 +16,7 @@ class UIConfig:
                         "component": "VCol", "props": {"cols": 12}, "content": [{
                             "component": "VAlert", "props": {
                                 "type": "info", "variant": "tonal",
-                                "text": "v1.0：读取 MoviePilot 订阅，直接搜索已配置的 Telegram 公开频道，提取并转存 115 分享资源。插件不依赖 CloudSaver；仅支持公开频道与 115 网盘。"
+                                "text": "v1.1：自动处理全部 MoviePilot 待处理订阅，直接搜索已配置的 Telegram 公开频道，提取并转存 115 分享资源。插件不依赖 CloudSaver；仅支持公开频道与 115 网盘。"
                             }
                         }]
                     }]
@@ -48,8 +26,8 @@ class UIConfig:
                     "content": [
                         {"component": "VCol", "props": {"cols": 12, "md": 2}, "content": [{"component": "VSwitch", "props": {"model": "enabled", "label": "启用插件"}}]},
                         {"component": "VCol", "props": {"cols": 12, "md": 2}, "content": [{"component": "VSwitch", "props": {"model": "notify", "label": "发送通知"}}]},
-                        {"component": "VCol", "props": {"cols": 12, "md": 2}, "content": [{"component": "VSwitch", "props": {"model": "onlyonce", "label": "立即运行一次"}}]},
-                        {"component": "VCol", "props": {"cols": 12, "md": 6}, "content": [{"component": "VCronField", "props": {
+                        {"component": "VCol", "props": {"cols": 12, "md": 3}, "content": [{"component": "VSwitch", "props": {"model": "onlyonce", "label": "保存后立即运行一次"}}]},
+                        {"component": "VCol", "props": {"cols": 12, "md": 5}, "content": [{"component": "VCronField", "props": {
                             "model": "cron", "label": "执行周期（Cron）", "placeholder": "30 */8 * * *",
                             "hint": "为降低 Telegram 与 115 风控，最短执行间隔为 8 小时。", "persistent-hint": True
                         }}]},
@@ -61,7 +39,7 @@ class UIConfig:
                         "component": "VCol", "props": {"cols": 12}, "content": [{
                             "component": "VAlert", "props": {
                                 "type": "warning", "variant": "tonal",
-                                "text": "仅填写自己的 115 Cookie；Cookie、分享密码不会写入通知。首次请使用测试订阅与测试目录验证。"
+                                "text": "默认复用“115网盘储存（P115Disk）”已保存的 Cookie；无需重复录入。若未安装或不使用 P115Disk，才切换为本插件独立 Cookie。Cookie、分享密码不会写入通知。首次请使用测试订阅与测试目录验证。"
                             }
                         }]
                     }]
@@ -69,9 +47,24 @@ class UIConfig:
                 {
                     "component": "VRow",
                     "content": [
+                        {"component": "VCol", "props": {"cols": 12, "md": 4}, "content": [{"component": "VSelect", "props": {
+                            "model": "cookie_source", "label": "115 凭据来源", "items": [
+                                {"title": "复用 115网盘储存（推荐）", "value": "p115disk"},
+                                {"title": "本插件独立 Cookie", "value": "local"},
+                            ],
+                            "hint": "复用模式读取 P115Disk 配置中的 cookie，不复制、不展示该值。", "persistent-hint": True,
+                        }}]},
                         {"component": "VCol", "props": {"cols": 12, "md": 4}, "content": [{"component": "VTextField", "props": {"model": "save_path", "label": "电视剧转存目录", "placeholder": "/我的接收/MoviePilot-TG/TV"}}]},
                         {"component": "VCol", "props": {"cols": 12, "md": 4}, "content": [{"component": "VTextField", "props": {"model": "movie_save_path", "label": "电影转存目录", "placeholder": "/我的接收/MoviePilot-TG/Movie"}}]},
-                        {"component": "VCol", "props": {"cols": 12, "md": 4}, "content": [{"component": "VTextField", "props": {"model": "cookies", "label": "115 Cookie", "type": "password", "placeholder": "UID=...; CID=...; SEID=..."}}]},
+                    ],
+                },
+                {
+                    "component": "VRow",
+                    "content": [
+                        {"component": "VCol", "props": {"cols": 12}, "content": [{"component": "VTextField", "props": {
+                            "model": "cookies", "label": "115 Cookie（仅独立模式使用）", "type": "password",
+                            "placeholder": "UID=...; CID=...; SEID=...", "hint": "凭据来源为“复用 115网盘储存”时，此项会被忽略。", "persistent-hint": True,
+                        }}]},
                     ],
                 },
                 {
@@ -121,10 +114,9 @@ class UIConfig:
                     "component": "VRow",
                     "content": [{
                         "component": "VCol", "props": {"cols": 12}, "content": [{
-                            "component": "VSelect", "props": {
-                                "model": "include_subscribes", "label": "指定订阅（仅处理勾选项目）",
-                                "multiple": True, "chips": True, "clearable": True, "closable-chips": True,
-                                "items": subscribe_options, "hint": "v1.0 默认指定模式；建议先只勾选一部测试剧或电影。", "persistent-hint": True
+                            "component": "VAlert", "props": {
+                                "type": "info", "variant": "tonal",
+                                "text": "订阅范围：自动读取并处理全部 MoviePilot 待处理订阅（状态 N、R），无需在本插件重复勾选。首次请保持测试模式开启，并使用独立测试转存目录。"
                             }
                         }]
                     }]
@@ -133,10 +125,55 @@ class UIConfig:
         }]
         defaults = {
             "enabled": False, "notify": True, "onlyonce": False, "cron": "30 */8 * * *",
-            "cookies": "", "save_path": "/我的接收/MoviePilot-TG/TV", "movie_save_path": "/我的接收/MoviePilot-TG/Movie",
+            "cookie_source": "p115disk", "cookies": "", "save_path": "/我的接收/MoviePilot-TG/TV", "movie_save_path": "/我的接收/MoviePilot-TG/Movie",
             "telegram_enabled": True, "telegram_channels": "QukanMovie\nlsp115\nvip115hot",
             "telegram_timeout": 20, "telegram_max_results": 10, "telegram_max_telegraph_pages": 3,
             "max_transfer_per_sync": 20, "batch_size": 10, "skip_other_season_dirs": True, "dry_run": True,
-            "include_subscribes": [],
         }
         return form, defaults
+
+    @staticmethod
+    def get_page(history: List[Dict[str, Any]]) -> List[dict]:
+        """插件详情页：提供无需保存配置的即时操作入口。"""
+        history = history or []
+        recent_count = len(history)
+        return [{
+            "component": "VCard",
+            "props": {"class": "mb-4"},
+            "content": [{
+                "component": "VCardText",
+                "content": [
+                    {
+                        "component": "VAlert",
+                        "props": {
+                            "type": "info", "variant": "tonal",
+                            "text": f"115 TG订阅追更 · 已记录 {recent_count} 条转存结果。立即运行会处理全部 MoviePilot 待处理订阅；请先确认测试模式与转存目录。",
+                        },
+                    },
+                    {
+                        "component": "VRow",
+                        "props": {"class": "mt-2"},
+                        "content": [
+                            {
+                                "component": "VCol", "props": {"cols": 12, "md": 6},
+                                "content": [{
+                                    "component": "VBtn",
+                                    "props": {"color": "primary", "variant": "outlined", "prepend-icon": "mdi-play-circle-outline"},
+                                    "text": "立即运行一次",
+                                    "events": {"click": {"api": f"/plugin/P115TGSub/run_once?apikey={settings.API_TOKEN}", "method": "post"}},
+                                }],
+                            },
+                            {
+                                "component": "VCol", "props": {"cols": 12, "md": 6},
+                                "content": [{
+                                    "component": "VBtn",
+                                    "props": {"color": "error", "variant": "outlined", "prepend-icon": "mdi-delete-sweep"},
+                                    "text": "清理插件日志",
+                                    "events": {"click": {"api": f"/plugin/P115TGSub/clear_plugin_log?apikey={settings.API_TOKEN}", "method": "post"}},
+                                }],
+                            },
+                        ],
+                    },
+                ],
+            }],
+        }]
