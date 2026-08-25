@@ -77,6 +77,18 @@ class SyncHandler:
         self._dry_run = bool(dry_run)
 
     @staticmethod
+    def _fallback_missing_episodes_from_subscribe(subscribe) -> List[int]:
+        """当媒体库未返回缺集明细时，使用 MoviePilot 订阅声明的季集范围继续追更。"""
+        try:
+            total_episode = int(getattr(subscribe, "total_episode", 0) or 0)
+            start_episode = max(1, int(getattr(subscribe, "start_episode", 1) or 1))
+        except (TypeError, ValueError):
+            return []
+        if total_episode < start_episode:
+            return []
+        return list(range(start_episode, total_episode + 1))
+
+    @staticmethod
     def _resource_title_matches(mediainfo: MediaInfo, resource_title: str) -> bool:
         """仅接受消息文本明确包含当前订阅标题的候选，避免搜索页模糊命中。"""
         title = str(getattr(mediainfo, "title", "") or "").strip()
@@ -416,8 +428,20 @@ class SyncHandler:
                         missing_episodes = list(range(start_ep, not_exist_info.total_episode + 1))
 
             if not missing_episodes:
-                logger.info(f"{mediainfo.title_year} S{season} 没有缺失剧集信息")
-                return transferred_count
+                # 某些 Emby/媒体库配置下，get_no_exists_info 在“媒体库无该剧”时不会返回季集明细。
+                # 订阅本身已声明待追更的起止集数，不能因此跳过 Telegram 搜索。
+                fallback_episodes = self._fallback_missing_episodes_from_subscribe(subscribe)
+                if fallback_episodes:
+                    missing_episodes = fallback_episodes
+                    logger.warning(
+                        f"{mediainfo.title_year} S{season} 未从媒体库获取缺集明细；"
+                        f"按 MoviePilot 订阅范围回退追更 E{missing_episodes[0]:02d}-E{missing_episodes[-1]:02d}"
+                    )
+                else:
+                    logger.info(
+                        f"{mediainfo.title_year} S{season} 没有缺失剧集信息，且订阅未提供有效总集数，跳过"
+                    )
+                    return transferred_count
 
             # 过滤掉小于开始集数的剧集
             if subscribe.start_episode:

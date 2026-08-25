@@ -56,11 +56,12 @@
     "release": true,
     "description": "读取 MoviePilot 订阅，直接搜索 Telegram 公开频道中的 115 分享资源并转存缺失内容。",
     "labels": "订阅,115网盘,Telegram,追更",
-    "version": "1.1.0",
+    "version": "1.1.1",
     "icon": "https://raw.githubusercontent.com/jxxghp/MoviePilot-Plugins/main/icons/cloud.png",
     "author": "lawzizhuang",
     "level": 1,
     "history": {
+      "v1.1.1": "修复：媒体库未返回剧集缺失明细时，按 MoviePilot 订阅的起止集数回退执行 Telegram 搜索。",
       "v1.1.0": "新增：插件详情页“立即运行一次”“清理插件日志”按钮；改为自动处理全部 MoviePilot 待处理订阅，不再重复勾选。",
       "v1.0.2": "优化：默认复用 115网盘储存（P115Disk）已配置的 Cookie，支持按需切换为独立 Cookie。",
       "v1.0.1": "修复：补齐 MoviePilot V2 插件抽象方法，解决在线安装后无法加载配置页的问题。",
