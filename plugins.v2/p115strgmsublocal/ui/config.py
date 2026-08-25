@@ -644,7 +644,7 @@ class UIConfig:
                                     'text': '立即搜索',
                                     'events': {
                                         'click': {
-                                            'api': f'/plugin/P115StrgmSub/sync_subscribes?apikey={settings.API_TOKEN}',
+                                            'api': f'/plugin/P115StrgmSubLocal/sync_subscribes?apikey={settings.API_TOKEN}',
                                             'method': 'get'
                                         }
                                     }
@@ -659,7 +659,7 @@ class UIConfig:
                                     'text': '清空历史记录',
                                     'events': {
                                         'click': {
-                                            'api': f'/plugin/P115StrgmSub/clear_history?apikey={settings.API_TOKEN}',
+                                            'api': f'/plugin/P115StrgmSubLocal/clear_history?apikey={settings.API_TOKEN}',
                                             'method': 'post'
                                         }
                                     }

@@ -278,7 +278,7 @@ class SyncHandler:
                                     torrent_name=resource_title,
                                     torrent_description=file_name,
                                     torrent_site="115网盘",
-                                    username="P115StrgmSub",
+                                    username="P115StrgmSubLocal",
                                     date=datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                                     note={"source": f"Subscribe|{subscribe.name}", "share_url": share_url}
                                 )
@@ -747,7 +747,7 @@ class SyncHandler:
                                     download_hash=share_url,
                                     torrent_name=resource_title,
                                     torrent_site="115网盘",
-                                    username="P115StrgmSub",
+                                    username="P115StrgmSubLocal",
                                     date=datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                                     note={"source": f"Subscribe|{subscribe.name}", "share_url": share_url}
                                 )
