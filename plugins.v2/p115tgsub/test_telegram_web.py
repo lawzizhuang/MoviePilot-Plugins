@@ -112,8 +112,28 @@ def test_parser_keeps_multiple_messages_with_void_tags():
     ]
 
 
+def test_title_filter_runs_before_result_limit():
+    search_url = "https://t.me/s/QukanMovie?q=%E5%A4%9C%E7%8E%8B%202026"
+    search_html = '''
+    <div class="tgme_widget_message_wrap"><div class="tgme_widget_message" data-post="QukanMovie/1">
+      <div class="tgme_widget_message_text">昨夜将至 (2026) <a href="https://115.com/s/wrong">资源</a></div>
+    </div></div>
+    <div class="tgme_widget_message_wrap"><div class="tgme_widget_message" data-post="QukanMovie/2">
+      <div class="tgme_widget_message_text">夜王 (2026) <a href="https://115.com/s/right">资源</a></div>
+    </div></div>
+    '''
+    client = TelegramWebClient(["QukanMovie"], max_results_per_channel=1)
+    client._session = _Session({search_url: search_html})
+
+    results = client.search_115_resources("夜王 2026", required_title="夜王")
+
+    assert [item["message_id"] for item in results] == ["2"]
+    assert [item["url"] for item in results] == ["https://115.com/s/right"]
+
+
 if __name__ == "__main__":
     test_direct_and_telegraph_115_links_are_extracted()
     test_mixed_cloud_links_only_keep_115()
     test_parser_keeps_multiple_messages_with_void_tags()
+    test_title_filter_runs_before_result_limit()
     print("telegram_web parser tests: OK")

@@ -41,7 +41,7 @@ class SearchHandler:
 
         for keyword in self._build_keywords(mediainfo, media_type, season):
             logger.info(f"使用 Telegram 公开频道搜索：{mediainfo.title}，关键词：{keyword!r}")
-            results = self._telegram_client.search_115_resources(keyword)
+            results = self._telegram_client.search_115_resources(keyword, required_title=mediainfo.title)
             if results:
                 logger.info(f"Telegram 关键词 {keyword!r} 找到 {len(results)} 个 115 资源")
                 return results

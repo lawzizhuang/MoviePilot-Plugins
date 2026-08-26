@@ -30,7 +30,7 @@ class P115TGSub(_PluginBase):
     plugin_name = "115 TG订阅追更"
     plugin_desc = "读取 MoviePilot 订阅，直接搜索 Telegram 公开频道中的 115 分享资源并补齐缺失内容。"
     plugin_icon = "https://raw.githubusercontent.com/jxxghp/MoviePilot-Plugins/main/icons/cloud.png"
-    plugin_version = "1.1.3"
+    plugin_version = "1.1.5"
     plugin_author = "lawzizhuang"
     author_url = "https://github.com/lawzizhuang/MoviePilot-Plugins"
     plugin_config_prefix = "p115tgsub_"
@@ -41,7 +41,7 @@ class P115TGSub(_PluginBase):
     _notify = True
     _onlyonce = False
     _cron = "30 */8 * * *"
-    _cookie_source = "p115disk"
+    _cookie_source = "p115strmhelper"
     _cookies = ""
     _save_path = "/我的接收/MoviePilot-TG/TV"
     _movie_save_path = "/我的接收/MoviePilot-TG/Movie"
@@ -109,9 +109,9 @@ class P115TGSub(_PluginBase):
             logger.warning(f"Cron 间隔必须不少于 {self._MIN_INTERVAL_HOURS} 小时，已使用默认值 30 */8 * * *")
             self._cron = "30 */8 * * *"
 
-        self._cookie_source = str(config.get("cookie_source", "p115disk") or "p115disk").strip().lower()
-        if self._cookie_source not in {"p115disk", "local"}:
-            self._cookie_source = "p115disk"
+        self._cookie_source = str(config.get("cookie_source", "p115strmhelper") or "p115strmhelper").strip().lower()
+        if self._cookie_source not in {"p115strmhelper", "p115disk", "local"}:
+            self._cookie_source = "p115strmhelper"
         self._cookies = str(config.get("cookies", "") or "").strip()
         self._save_path = str(config.get("save_path", self._save_path) or self._save_path).strip()
         self._movie_save_path = str(config.get("movie_save_path", self._movie_save_path) or self._movie_save_path).strip()
@@ -149,19 +149,27 @@ class P115TGSub(_PluginBase):
             self._scheduler.start()
 
     def _resolve_p115_cookie(self) -> str:
-        """按配置获取 115 Cookie；默认只复用 P115Disk 的持久化配置。"""
+        """按配置获取 115 Cookie；优先复用 115网盘STRM助手的实际运行凭据。"""
         if self._cookie_source == "local":
             return self._cookies
 
-        p115disk_config = self.get_config("P115Disk") or {}
-        if not isinstance(p115disk_config, dict):
-            logger.error("读取 115网盘储存（P115Disk）配置失败")
+        source = {
+            "p115strmhelper": ("P115StrmHelper", "cookies", "115网盘STRM助手（P115StrmHelper）"),
+            "p115disk": ("P115Disk", "cookie", "115网盘储存（P115Disk）"),
+        }
+        plugin_id, cookie_key, display_name = source[self._cookie_source]
+        plugin_config = self.get_config(plugin_id) or {}
+        if not isinstance(plugin_config, dict):
+            logger.error(f"读取 {display_name} 配置失败")
             return ""
-        cookie = str(p115disk_config.get("cookie", "") or "").strip()
+        cookie = str(plugin_config.get(cookie_key, "") or "").strip()
         if not cookie:
-            logger.error("未在 115网盘储存（P115Disk）中找到有效 Cookie；请先完成其配置，或将凭据来源切换为“本插件独立 Cookie”")
+            logger.error(
+                f"未在 {display_name} 中找到有效 Cookie；请先完成其配置，"
+                "或将凭据来源切换为“本插件独立 Cookie”"
+            )
             return ""
-        logger.info("115 TG订阅追更已复用 115网盘储存（P115Disk）的 Cookie 配置")
+        logger.info(f"115 TG订阅追更已复用 {display_name} 的 Cookie 配置")
         return cookie
 
     def _init_clients(self) -> None:

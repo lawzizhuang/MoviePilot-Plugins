@@ -4,6 +4,7 @@ from __future__ import annotations
 import html
 import re
 import time
+import unicodedata
 from dataclasses import dataclass, field
 from html.parser import HTMLParser
 from typing import Any, Dict, Iterable, List, Optional, Sequence
@@ -249,7 +250,26 @@ class TelegramWebClient:
         message_id = parts[-1] if parts else ""
         return f"https://t.me/{channel}/{message_id}" if message_id else f"https://t.me/{channel}"
 
-    def search_messages(self, channel: str, keyword: str) -> List[TelegramMessage]:
+    @staticmethod
+    def _message_matches_title(message: TelegramMessage, required_title: str) -> bool:
+        """仅保留明确包含订阅标题的消息，避免宽泛搜索词被无关年份结果占满。"""
+        title = str(required_title or "").strip()
+        text = str(message.text or "").strip()
+        if not title:
+            return True
+        if not text:
+            return False
+
+        def compact(value: str) -> str:
+            normalized = unicodedata.normalize("NFKC", value).casefold()
+            # \W 会移除中文，不能用它清理标题；只移除明确的分隔符和空白。
+            return re.sub(r"[\s\-_./:：()（）\[\]【】{}]+", "", normalized)
+
+        expected = compact(title)
+        actual = compact(text)
+        return bool(expected) and expected in actual
+
+    def search_messages(self, channel: str, keyword: str, required_title: str = "") -> List[TelegramMessage]:
         """从一个公开频道的搜索页面提取消息；不执行 Telegraph 二跳。"""
         channel = self.normalize_channels([channel])[0] if self.normalize_channels([channel]) else ""
         keyword = str(keyword or "").strip()
@@ -270,12 +290,14 @@ class TelegramWebClient:
             return []
 
         messages: List[TelegramMessage] = []
-        for raw in parser.messages[: self.max_results_per_channel]:
+        # 应先按订阅标题过滤，再应用每频道消息上限；否则“夜王 2026”这类查询会被
+        # “昨夜将至 (2026)”等无关结果占满，后续频道或正确消息没有机会进入校验。
+        for raw in parser.messages:
             post = str(raw.get("post") or "")
             message_id = post.rsplit("/", 1)[-1] if "/" in post else ""
             links = [self._clean_url(item) for item in raw.get("links") or []]
             text = " ".join("".join(raw.get("text") or []).split())
-            messages.append(TelegramMessage(
+            message = TelegramMessage(
                 channel=channel,
                 message_id=message_id,
                 message_url=self._message_url(channel, post),
@@ -283,7 +305,12 @@ class TelegramWebClient:
                 published_at=str(raw.get("published_at") or ""),
                 links=links,
                 telegraph_links=self._extract_telegraph_urls(links),
-            ))
+            )
+            if required_title and not self._message_matches_title(message, required_title):
+                continue
+            messages.append(message)
+            if len(messages) >= self.max_results_per_channel:
+                break
         return messages
 
     def _extract_telegraph_115_links(self, url: str) -> List[str]:
@@ -307,8 +334,8 @@ class TelegramWebClient:
         actual = re.sub(r"[\W_]+", "", str(message.text or "").casefold())
         return len(expected) >= 2 and expected in actual
 
-    def search_115_resources(self, keyword: str) -> List[Dict[str, str]]:
-        """搜索所有已配置频道，返回统一的 115 资源格式。"""
+    def search_115_resources(self, keyword: str, required_title: str = "") -> List[Dict[str, str]]:
+        """搜索所有已配置频道，返回标题已初筛的 115 资源格式。"""
         if not self.channels:
             logger.warning("Telegram 搜索源未配置公开频道")
             return []
@@ -316,7 +343,7 @@ class TelegramWebClient:
         results: List[Dict[str, str]] = []
         seen_share_urls = set()
         for channel in self.channels:
-            messages = self.search_messages(channel, keyword)
+            messages = self.search_messages(channel, keyword, required_title=required_title)
             if not messages:
                 logger.info(f"Telegram 频道 {channel} 未找到关键词“{keyword}”的消息")
                 continue

@@ -39,7 +39,7 @@ class UIConfig:
                         "component": "VCol", "props": {"cols": 12}, "content": [{
                             "component": "VAlert", "props": {
                                 "type": "warning", "variant": "tonal",
-                                "text": "默认复用“115网盘储存（P115Disk）”已保存的 Cookie；无需重复录入。若未安装或不使用 P115Disk，才切换为本插件独立 Cookie。Cookie、分享密码不会写入通知。首次请使用测试订阅与测试目录验证。"
+                                "text": "默认复用“115网盘STRM助手（P115StrmHelper）”已保存的 Cookie，与现有 STRM/转存链路保持一致；无需重复录入。也可按需改为复用115网盘储存（P115Disk），或使用本插件独立 Cookie。Cookie、分享密码不会写入通知。首次请使用测试订阅与测试目录验证。"
                             }
                         }]
                     }]
@@ -49,10 +49,11 @@ class UIConfig:
                     "content": [
                         {"component": "VCol", "props": {"cols": 12, "md": 4}, "content": [{"component": "VSelect", "props": {
                             "model": "cookie_source", "label": "115 凭据来源", "items": [
-                                {"title": "复用 115网盘储存（推荐）", "value": "p115disk"},
+                                {"title": "复用 115网盘STRM助手（推荐）", "value": "p115strmhelper"},
+                                {"title": "复用 115网盘储存", "value": "p115disk"},
                                 {"title": "本插件独立 Cookie", "value": "local"},
                             ],
-                            "hint": "复用模式读取 P115Disk 配置中的 cookie，不复制、不展示该值。", "persistent-hint": True,
+                            "hint": "默认读取 P115StrmHelper 配置中的 cookies；P115Disk 使用 cookie 字段。两种复用模式均不复制、不展示凭据。", "persistent-hint": True,
                         }}]},
                         {"component": "VCol", "props": {"cols": 12, "md": 4}, "content": [{"component": "VTextField", "props": {"model": "save_path", "label": "电视剧转存目录", "placeholder": "/我的接收/MoviePilot-TG/TV"}}]},
                         {"component": "VCol", "props": {"cols": 12, "md": 4}, "content": [{"component": "VTextField", "props": {"model": "movie_save_path", "label": "电影转存目录", "placeholder": "/我的接收/MoviePilot-TG/Movie"}}]},
@@ -63,7 +64,7 @@ class UIConfig:
                     "content": [
                         {"component": "VCol", "props": {"cols": 12}, "content": [{"component": "VTextField", "props": {
                             "model": "cookies", "label": "115 Cookie（仅独立模式使用）", "type": "password",
-                            "placeholder": "UID=...; CID=...; SEID=...", "hint": "凭据来源为“复用 115网盘储存”时，此项会被忽略。", "persistent-hint": True,
+                            "placeholder": "UID=...; CID=...; SEID=...", "hint": "凭据来源为任一“复用”模式时，此项会被忽略。", "persistent-hint": True,
                         }}]},
                     ],
                 },
@@ -125,7 +126,7 @@ class UIConfig:
         }]
         defaults = {
             "enabled": False, "notify": True, "onlyonce": False, "cron": "30 */8 * * *",
-            "cookie_source": "p115disk", "cookies": "", "save_path": "/我的接收/MoviePilot-TG/TV", "movie_save_path": "/我的接收/MoviePilot-TG/Movie",
+            "cookie_source": "p115strmhelper", "cookies": "", "save_path": "/我的接收/MoviePilot-TG/TV", "movie_save_path": "/我的接收/MoviePilot-TG/Movie",
             "telegram_enabled": True, "telegram_channels": "QukanMovie\nlsp115\nvip115hot",
             "telegram_timeout": 20, "telegram_max_results": 10, "telegram_max_telegraph_pages": 3,
             "max_transfer_per_sync": 20, "batch_size": 10, "skip_other_season_dirs": True, "dry_run": True,
