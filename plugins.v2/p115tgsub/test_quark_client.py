@@ -36,7 +36,8 @@ class _FakeQuarkClient(QuarkShareClient):
         super().__init__("test-cookie", min_interval=0.2)
         self.calls = []
         self.saved_payloads = []
-        self.directory_items = {}  # parent_id -> [raw items]
+        self.directory_items = {"0": []}  # parent_id -> [raw items]
+        self.path_fids = {"/": "0"}
 
     def _request(self, method, endpoint, **kwargs):
         self.calls.append((method, endpoint, kwargs))
@@ -64,16 +65,27 @@ class _FakeQuarkClient(QuarkShareClient):
                     },
                 }
             return {"status": 2000000, "code": 0, "data": {"list": []}}
+        if endpoint == "file/info/path_list":
+            paths = kwargs["json_data"]["file_path"]
+            entries = [
+                {"fid": self.path_fids[path], "file_path": path, "dir": True}
+                for path in paths if path in self.path_fids
+            ]
+            return {"status": 2000000, "code": 0, "data": entries}
         if endpoint == "file/sort":
             parent_id = str(kwargs["params"].get("pdir_fid") or "0")
             return {"status": 2000000, "code": 0, "data": {"list": self.directory_items.get(parent_id, [])}}
         if endpoint == "file":
-            name = kwargs["json_data"]["file_name"]
-            parent = str(kwargs["json_data"]["pdir_fid"] or "0")
-            raw = {"fid": f"dir-{name}", "file_name": name, "file_type": 0}
-            self.directory_items.setdefault(parent, []).append(raw)
-            self.directory_items.setdefault(raw["fid"], [])
-            return {"status": 2000000, "code": 0, "data": raw}
+            payload = kwargs["json_data"]
+            assert payload["pdir_fid"] == "0"
+            assert payload["file_name"] == ""
+            path = payload["dir_path"]
+            fid = self.path_fids.setdefault(path, f"dir-{len(self.path_fids)}")
+            self.directory_items.setdefault(fid, [])
+            return {
+                "status": 2000000, "code": 0,
+                "data": {"fid": fid, "file_path": path, "dir": True},
+            }
         if endpoint == "share/sharepage/save":
             self.saved_payloads.append(kwargs["json_data"])
             target = str(kwargs["json_data"]["to_pdir_fid"])
@@ -136,10 +148,14 @@ def test_risk_response_stops_remaining_batches():
 def test_get_pid_list_files_and_confirm_exist():
     client = _FakeQuarkClient()
     url = "https://pan.quark.cn/s/AbC123?pwd=aB12"
-    # 目录创建与解析（兼容 FileMatcher.check_existing_episodes 的 -1 语义）
+    # 完整路径解析/创建（兼容 FileMatcher.check_existing_episodes 的 -1 语义）
     assert client.get_pid_by_path("/不存在/目录", mkdir=False) == -1
     dir_id = client.get_pid_by_path("/夸克接收/TG/TV", mkdir=True)
     assert dir_id and dir_id != -1
+    path_call = next(call for call in client.calls if call[1] == "file/info/path_list")
+    assert path_call[2]["json_data"] == {"file_path": ["/不存在/目录"], "namespace": "0"}
+    mkdir_call = next(call for call in client.calls if call[1] == "file")
+    assert mkdir_call[2]["json_data"]["dir_path"] == "/夸克接收/TG/TV"
     assert client.list_files("/夸克接收/TG/TV") == []
     # 转存后二次确认
     success, failed = client.transfer_files_batch(url, ["video-1"], "/夸克接收/TG/TV")

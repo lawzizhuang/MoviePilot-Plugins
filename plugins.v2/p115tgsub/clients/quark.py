@@ -433,35 +433,58 @@ class QuarkShareClient:
             page += 1
         return output
 
-    def _resolve_directory(self, path: str, create: bool = True) -> Optional[str]:
-        """逐级解析夸克个人网盘目录；仅在真实转存阶段调用。"""
-        current_id = "0"
-        for part in (value for value in str(path or "/").split("/") if value):
-            entries = self._list_personal_directory(current_id)
-            if entries is None:
-                return None
-            found = next(
-                (item for item in entries if item["is_dir"] and item["name"] == part),
-                None,
-            )
-            if found:
-                current_id = found["id"]
+    @staticmethod
+    def _normalize_directory_path(path: str) -> str:
+        """标准化夸克绝对目录路径，供 path_list 与 mkdir 使用。"""
+        parts = [part for part in str(path or "").replace("\\", "/").split("/") if part]
+        return "/" + "/".join(parts) if parts else "/"
+
+    def _get_path_entry(self, path: str) -> Optional[Dict[str, Any]]:
+        """按完整绝对路径查询个人网盘目录/文件 FID。"""
+        normalized_path = self._normalize_directory_path(path)
+        if normalized_path == "/":
+            return {"fid": "0", "file_path": "/", "dir": True}
+        result = self._request(
+            "POST", "file/info/path_list",
+            json_data={"file_path": [normalized_path], "namespace": "0"},
+        )
+        if not self._is_success(result):
+            return None
+        data = self._data(result)
+        entries = data if isinstance(data, list) else self._page_items(data)
+        for entry in entries:
+            if not isinstance(entry, dict):
                 continue
-            if not create:
-                return None
-            created = self._request(
-                "POST", "file",
-                json_data={"pdir_fid": current_id, "file_name": part, "dir_init_lock": False, "dir_path": ""},
-            )
-            if not self._is_success(created):
-                return None
-            item = self._to_file(self._data(created))
-            if not item:
-                # 目录创建存在短暂异步可见窗口，重新查询一次。
-                time.sleep(1)
-                return self._resolve_directory(path, create=False)
-            current_id = item["id"]
-        return current_id
+            entry_path = self._normalize_directory_path(str(entry.get("file_path") or ""))
+            if entry_path == normalized_path and entry.get("fid") not in (None, ""):
+                return entry
+        return None
+
+    def _resolve_directory(self, path: str, create: bool = True) -> Optional[str]:
+        """按 QAS 契约解析完整路径，缺失时一次性创建完整目录树。"""
+        normalized_path = self._normalize_directory_path(path)
+        existing = self._get_path_entry(normalized_path)
+        if existing:
+            return str(existing["fid"])
+        if not create or normalized_path == "/":
+            return None
+        created = self._request(
+            "POST", "file",
+            json_data={
+                "pdir_fid": "0", "file_name": "", "dir_path": normalized_path,
+                "dir_init_lock": False,
+            },
+        )
+        if not self._is_success(created):
+            logger.warning("夸克完整目标目录创建失败")
+            return None
+        data = self._data(created)
+        if isinstance(data, dict) and data.get("fid") not in (None, ""):
+            return str(data["fid"])
+        # 接口存在短暂可见窗口；只读回查一次，避免提交未知目录 FID。
+        time.sleep(1)
+        entry = self._get_path_entry(normalized_path)
+        return str(entry["fid"]) if entry else None
 
     def get_pid_by_path(self, path: str, mkdir: bool = True) -> Any:
         """兼容 FileMatcher 目录检查：返回目录 ID，不存在时返回 -1。"""
