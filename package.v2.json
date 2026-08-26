@@ -56,11 +56,12 @@
     "release": true,
     "description": "读取 MoviePilot 订阅，直接搜索 Telegram 公开频道中的 115 分享资源并转存缺失内容。",
     "labels": "订阅,115网盘,Telegram,追更",
-    "version": "1.1.5",
+    "version": "1.2.0",
     "icon": "https://raw.githubusercontent.com/jxxghp/MoviePilot-Plugins/main/icons/cloud.png",
     "author": "lawzizhuang",
     "level": 1,
     "history": {
+      "v1.2.0": "新增：夸克阶段 A 安全适配层与 QuarkDisk Cookie 只读连通性验证；暂未开启 Telegram→夸克自动转存。",
       "v1.1.5": "优化：默认复用 115网盘STRM助手（P115StrmHelper）的 cookies，保留 P115Disk 与独立 Cookie 作为可选来源。",
       "v1.1.4": "修复：Telegram 搜索结果先截取上限导致同年份相近标题挤占正确资源；现按订阅标题初筛后再限额。",
       "v1.1.3": "修复：Telegram 搜索页含封面图片等无闭合标签时解析深度失衡，导致前序消息及其 Telegraph 资源链接被遗漏。",

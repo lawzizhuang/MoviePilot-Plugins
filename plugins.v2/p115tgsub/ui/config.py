@@ -16,7 +16,7 @@ class UIConfig:
                         "component": "VCol", "props": {"cols": 12}, "content": [{
                             "component": "VAlert", "props": {
                                 "type": "info", "variant": "tonal",
-                                "text": "v1.1：自动处理全部 MoviePilot 待处理订阅，直接搜索已配置的 Telegram 公开频道，提取并转存 115 分享资源。插件不依赖 CloudSaver；仅支持公开频道与 115 网盘。"
+                                "text": "v1.2：当前稳定支持 Telegram 公开频道的 115 订阅追更；已新增夸克阶段 A 安全适配层，仅用于验证 QuarkDisk 凭据连通性，尚不会从 Telegram 转存夸克资源。"
                             }
                         }]
                     }]
@@ -66,6 +66,25 @@ class UIConfig:
                             "model": "cookies", "label": "115 Cookie（仅独立模式使用）", "type": "password",
                             "placeholder": "UID=...; CID=...; SEID=...", "hint": "凭据来源为任一“复用”模式时，此项会被忽略。", "persistent-hint": True,
                         }}]},
+                    ],
+                },
+                {
+                    "component": "VRow",
+                    "content": [{
+                        "component": "VCol", "props": {"cols": 12}, "content": [{
+                            "component": "VAlert", "props": {
+                                "type": "info", "variant": "tonal",
+                                "text": "夸克阶段 A：只复用已安装“夸克网盘存储（QuarkDisk）”的 Cookie 进行连通性验证。不会读取 Telegram 夸克分享、创建目录或保存文件；实际夸克追更将在验证通过后另行开启。"
+                            }
+                        }]
+                    }]
+                },
+                {
+                    "component": "VRow",
+                    "content": [
+                        {"component": "VCol", "props": {"cols": 12, "md": 4}, "content": [{"component": "VSwitch", "props": {"model": "quark_enabled", "label": "验证 QuarkDisk 夸克连通性", "hint": "仅初始化夸克适配层；不启用夸克资源转存。"}}]},
+                        {"component": "VCol", "props": {"cols": 12, "md": 4}, "content": [{"component": "VTextField", "props": {"model": "quark_timeout", "label": "夸克请求超时（秒）", "type": "number", "placeholder": "30"}}]},
+                        {"component": "VCol", "props": {"cols": 12, "md": 4}, "content": [{"component": "VTextField", "props": {"model": "quark_risk_cooldown", "label": "夸克风控冷却（秒）", "type": "number", "placeholder": "1800", "hint": "未来转存遇到“频繁/风控/限制”时的停止请求时长。"}}]},
                     ],
                 },
                 {
@@ -130,6 +149,7 @@ class UIConfig:
             "telegram_enabled": True, "telegram_channels": "QukanMovie\nlsp115\nvip115hot",
             "telegram_timeout": 20, "telegram_max_results": 10, "telegram_max_telegraph_pages": 3,
             "max_transfer_per_sync": 20, "batch_size": 10, "skip_other_season_dirs": True, "dry_run": True,
+            "quark_enabled": False, "quark_timeout": 30, "quark_risk_cooldown": 1800,
         }
         return form, defaults
 
@@ -148,7 +168,7 @@ class UIConfig:
                         "component": "VAlert",
                         "props": {
                             "type": "info", "variant": "tonal",
-                            "text": f"115 TG订阅追更 · 已记录 {recent_count} 条转存结果。立即运行会处理全部 MoviePilot 待处理订阅；请先确认测试模式与转存目录。",
+                            "text": f"115 TG订阅追更 · 已记录 {recent_count} 条转存结果。立即运行仅处理 115 待处理订阅；夸克目前仅可进行独立的只读连通性验证。",
                         },
                     },
                     {
@@ -156,7 +176,7 @@ class UIConfig:
                         "props": {"class": "mt-2"},
                         "content": [
                             {
-                                "component": "VCol", "props": {"cols": 12, "md": 6},
+                                "component": "VCol", "props": {"cols": 12, "md": 4},
                                 "content": [{
                                     "component": "VBtn",
                                     "props": {"color": "primary", "variant": "outlined", "prepend-icon": "mdi-play-circle-outline"},
@@ -165,7 +185,16 @@ class UIConfig:
                                 }],
                             },
                             {
-                                "component": "VCol", "props": {"cols": 12, "md": 6},
+                                "component": "VCol", "props": {"cols": 12, "md": 4},
+                                "content": [{
+                                    "component": "VBtn",
+                                    "props": {"color": "secondary", "variant": "outlined", "prepend-icon": "mdi-cloud-check-outline"},
+                                    "text": "验证夸克连通性",
+                                    "events": {"click": {"api": f"/plugin/P115TGSub/verify_quark?apikey={settings.API_TOKEN}", "method": "post"}},
+                                }],
+                            },
+                            {
+                                "component": "VCol", "props": {"cols": 12, "md": 4},
                                 "content": [{
                                     "component": "VBtn",
                                     "props": {"color": "error", "variant": "outlined", "prepend-icon": "mdi-delete-sweep"},

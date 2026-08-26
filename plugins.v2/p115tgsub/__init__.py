@@ -30,7 +30,7 @@ class P115TGSub(_PluginBase):
     plugin_name = "115 TG订阅追更"
     plugin_desc = "读取 MoviePilot 订阅，直接搜索 Telegram 公开频道中的 115 分享资源并补齐缺失内容。"
     plugin_icon = "https://raw.githubusercontent.com/jxxghp/MoviePilot-Plugins/main/icons/cloud.png"
-    plugin_version = "1.1.5"
+    plugin_version = "1.2.0"
     plugin_author = "lawzizhuang"
     author_url = "https://github.com/lawzizhuang/MoviePilot-Plugins"
     plugin_config_prefix = "p115tgsub_"
@@ -53,7 +53,10 @@ class P115TGSub(_PluginBase):
     _max_transfer_per_sync = 20
     _batch_size = 10
     _skip_other_season_dirs = True
-    _dry_run = True
+    _quark_enabled = False
+    _quark_timeout = 30
+    _quark_risk_cooldown = 1800
+    _quark_client = None
     _sync_running = False
     _run_requested = False
 
@@ -124,6 +127,12 @@ class P115TGSub(_PluginBase):
         self._batch_size = self._int_config(config.get("batch_size", 10), 10, 1, 20)
         self._skip_other_season_dirs = bool(config.get("skip_other_season_dirs", True))
         self._dry_run = bool(config.get("dry_run", True))
+        # 夸克阶段 A 仅验证 QuarkDisk 凭据连通性与适配层；实际订阅转存尚未接入。
+        self._quark_enabled = bool(config.get("quark_enabled", False))
+        self._quark_timeout = self._int_config(config.get("quark_timeout", 30), 30, 5, 60)
+        self._quark_risk_cooldown = self._int_config(
+            config.get("quark_risk_cooldown", 1800), 1800, 300, 86400
+        )
         try:
             self._init_clients()
             self._init_handlers()
@@ -172,6 +181,19 @@ class P115TGSub(_PluginBase):
         logger.info(f"115 TG订阅追更已复用 {display_name} 的 Cookie 配置")
         return cookie
 
+    def _resolve_quark_cookie(self) -> str:
+        """仅在运行时读取 QuarkDisk Cookie，绝不复制到本插件配置或日志。"""
+        quark_config = self.get_config("QuarkDisk") or {}
+        if not isinstance(quark_config, dict):
+            logger.error("读取夸克网盘存储（QuarkDisk）配置失败")
+            return ""
+        cookie = str(quark_config.get("cookie", "") or "").strip()
+        if not cookie:
+            logger.error("未在夸克网盘存储（QuarkDisk）中找到有效 Cookie")
+            return ""
+        logger.info("115 TG订阅追更已复用夸克网盘存储（QuarkDisk）的 Cookie 配置")
+        return cookie
+
     def _init_clients(self) -> None:
         proxy = settings.PROXY
         self._telegram_client = TelegramWebClient(
@@ -188,6 +210,20 @@ class P115TGSub(_PluginBase):
             self._p115_manager = P115ClientManager(cookies=cookies)
         else:
             self._p115_manager = None
+        if self._quark_enabled:
+            quark_cookie = self._resolve_quark_cookie()
+            if quark_cookie:
+                from .clients import QuarkShareClient
+                self._quark_client = QuarkShareClient(
+                    cookie=quark_cookie,
+                    proxy=proxy,
+                    timeout=self._quark_timeout,
+                    risk_cooldown=self._quark_risk_cooldown,
+                )
+            else:
+                self._quark_client = None
+        else:
+            self._quark_client = None
 
     def _init_handlers(self) -> None:
         self._search_handler = SearchHandler(self._telegram_client, self._telegram_enabled)
@@ -218,6 +254,8 @@ class P115TGSub(_PluginBase):
             "telegram_max_telegraph_pages": self._telegram_max_telegraph_pages,
             "max_transfer_per_sync": self._max_transfer_per_sync, "batch_size": self._batch_size,
             "skip_other_season_dirs": self._skip_other_season_dirs, "dry_run": self._dry_run,
+            "quark_enabled": self._quark_enabled, "quark_timeout": self._quark_timeout,
+            "quark_risk_cooldown": self._quark_risk_cooldown,
         }
 
     def stop_service(self) -> None:
@@ -247,6 +285,12 @@ class P115TGSub(_PluginBase):
                 "endpoint": self.api_run_once,
                 "methods": ["POST"],
                 "summary": "立即执行一次 115 TG订阅追更",
+            },
+            {
+                "path": "/verify_quark",
+                "endpoint": self.api_verify_quark,
+                "methods": ["POST"],
+                "summary": "验证 QuarkDisk 夸克账号连通性",
             },
             {
                 "path": "/clear_plugin_log",
@@ -358,6 +402,18 @@ class P115TGSub(_PluginBase):
             self._run_requested = True
         Thread(target=self._run_queued_once, name="P115TGSubRunOnce", daemon=True).start()
         return {"success": True, "message": "任务已开始执行，请查看插件日志"}
+
+    def api_verify_quark(self, apikey: str) -> Dict[str, Any]:
+        """只读验证 QuarkDisk 复用凭据，不读取分享、不创建目录、不保存文件。"""
+        if apikey != settings.API_TOKEN:
+            return {"success": False, "message": "API密钥错误"}
+        if not self._quark_enabled:
+            return {"success": False, "message": "请先启用“验证 QuarkDisk 夸克连通性”并保存配置"}
+        if not self._quark_client:
+            return {"success": False, "message": "夸克客户端未初始化，请检查 QuarkDisk 是否启用且 Cookie 有效"}
+        if self._quark_client.check_login():
+            return {"success": True, "message": "夸克连通性验证成功：已复用 QuarkDisk Cookie"}
+        return {"success": False, "message": "夸克连通性验证失败，请检查 QuarkDisk Cookie"}
 
     def api_clear_plugin_log(self, apikey: str) -> Dict[str, Any]:
         """仅清理本插件当前及滚动日志，不影响 MoviePilot 主日志或其他插件。"""
