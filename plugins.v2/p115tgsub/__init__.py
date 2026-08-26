@@ -1,6 +1,5 @@
 """115 Telegram 公开频道订阅追更插件。"""
 import datetime
-from pathlib import Path
 from threading import Lock, Thread
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -16,8 +15,8 @@ from app.log import logger
 from app.plugins import _PluginBase
 from app.schemas.types import EventType, MediaType, NotificationType
 
-from .clients import P115ClientManager, TelegramWebClient
-from .handlers import SearchHandler, SubscribeHandler, SyncHandler
+from .clients import P115ClientManager, QuarkShareClient, SmartStrmClient, TelegramWebClient
+from .handlers import QuarkSyncHandler, SearchHandler, SubscribeHandler, SyncHandler
 from .ui import UIConfig
 
 lock = Lock()
@@ -25,12 +24,12 @@ run_state_lock = Lock()
 
 
 class P115TGSub(_PluginBase):
-    """从 Telegram 公开频道搜索 115 分享链接的 MoviePilot 订阅追更插件。"""
+    """从 Telegram 公开频道搜索 115/夸克分享资源的 MoviePilot 订阅追更插件。"""
 
     plugin_name = "115 TG订阅追更"
-    plugin_desc = "读取 MoviePilot 订阅，直接搜索 Telegram 公开频道中的 115 分享资源并补齐缺失内容。"
+    plugin_desc = "读取 MoviePilot 订阅，直接搜索 Telegram 公开频道中的 115/夸克分享资源并补齐缺失内容。"
     plugin_icon = "https://raw.githubusercontent.com/jxxghp/MoviePilot-Plugins/main/icons/cloud.png"
-    plugin_version = "1.2.0"
+    plugin_version = "2.0.0"
     plugin_author = "lawzizhuang"
     author_url = "https://github.com/lawzizhuang/MoviePilot-Plugins"
     plugin_config_prefix = "p115tgsub_"
@@ -56,7 +55,15 @@ class P115TGSub(_PluginBase):
     _quark_enabled = False
     _quark_timeout = 30
     _quark_risk_cooldown = 1800
+    _quark_save_path = "/夸克接收/MoviePilot-TG/TV"
+    _quark_movie_save_path = "/夸克接收/MoviePilot-TG/Movie"
+    _strm_enabled = False
+    _smartstrm_webhook_url = ""
+    _smartstrm_task = "tv,movie"
+    _smartstrm_xlist_path_fix = ""
+    _strm_retry_max = 5
     _quark_client = None
+    _strm_client = None
     _sync_running = False
     _run_requested = False
 
@@ -66,6 +73,7 @@ class P115TGSub(_PluginBase):
     _search_handler: Optional[SearchHandler] = None
     _subscribe_handler: Optional[SubscribeHandler] = None
     _sync_handler: Optional[SyncHandler] = None
+    _quark_handler: Optional[QuarkSyncHandler] = None
 
     _MIN_INTERVAL_HOURS = 8
 
@@ -127,12 +135,19 @@ class P115TGSub(_PluginBase):
         self._batch_size = self._int_config(config.get("batch_size", 10), 10, 1, 20)
         self._skip_other_season_dirs = bool(config.get("skip_other_season_dirs", True))
         self._dry_run = bool(config.get("dry_run", True))
-        # 夸克阶段 A 仅验证 QuarkDisk 凭据连通性与适配层；实际订阅转存尚未接入。
+        # 夸克：115 无可用候选时兜底；SmartStrm 负责本地 STRM 后处理。
         self._quark_enabled = bool(config.get("quark_enabled", False))
         self._quark_timeout = self._int_config(config.get("quark_timeout", 30), 30, 5, 60)
         self._quark_risk_cooldown = self._int_config(
             config.get("quark_risk_cooldown", 1800), 1800, 300, 86400
         )
+        self._quark_save_path = str(config.get("quark_save_path", self._quark_save_path) or self._quark_save_path).strip()
+        self._quark_movie_save_path = str(config.get("quark_movie_save_path", self._quark_movie_save_path) or self._quark_movie_save_path).strip()
+        self._strm_enabled = bool(config.get("strm_enabled", False))
+        self._smartstrm_webhook_url = str(config.get("smartstrm_webhook_url", "") or "").strip()
+        self._smartstrm_task = str(config.get("smartstrm_task", "tv,movie") or "tv,movie").strip()
+        self._smartstrm_xlist_path_fix = str(config.get("smartstrm_xlist_path_fix", "") or "").strip()
+        self._strm_retry_max = self._int_config(config.get("strm_retry_max", 5), 5, 1, 20)
         try:
             self._init_clients()
             self._init_handlers()
@@ -143,6 +158,9 @@ class P115TGSub(_PluginBase):
             self._search_handler = None
             self._subscribe_handler = None
             self._sync_handler = None
+            self._quark_handler = None
+            self._quark_client = None
+            self._strm_client = None
             return
 
         if self._onlyonce:
@@ -224,6 +242,13 @@ class P115TGSub(_PluginBase):
                 self._quark_client = None
         else:
             self._quark_client = None
+        if self._strm_enabled:
+            self._strm_client = SmartStrmClient(
+                webhook_url=self._smartstrm_webhook_url,
+                timeout=self._quark_timeout,
+            )
+        else:
+            self._strm_client = None
 
     def _init_handlers(self) -> None:
         self._search_handler = SearchHandler(self._telegram_client, self._telegram_enabled)
@@ -244,6 +269,27 @@ class P115TGSub(_PluginBase):
             save_data_func=self.save_data,
             dry_run=self._dry_run,
         )
+        self._quark_handler = QuarkSyncHandler(
+            quark_client=self._quark_client,
+            search_handler=self._search_handler,
+            subscribe_handler=self._subscribe_handler,
+            chain=self.chain,
+            save_path=self._quark_save_path,
+            movie_save_path=self._quark_movie_save_path,
+            max_transfer_per_sync=self._max_transfer_per_sync,
+            batch_size=self._batch_size,
+            skip_other_season_dirs=self._skip_other_season_dirs,
+            notify=self._notify,
+            post_message_func=self.post_message,
+            get_data_func=self.get_data,
+            save_data_func=self.save_data,
+            dry_run=self._dry_run,
+            strm_enabled=self._strm_enabled,
+            strm_client=self._strm_client,
+            strm_task=self._smartstrm_task,
+            strm_xlist_path_fix=self._smartstrm_xlist_path_fix,
+            strm_max_attempts=self._strm_retry_max,
+        )
 
     def _config_snapshot(self) -> Dict[str, Any]:
         return {
@@ -256,6 +302,10 @@ class P115TGSub(_PluginBase):
             "skip_other_season_dirs": self._skip_other_season_dirs, "dry_run": self._dry_run,
             "quark_enabled": self._quark_enabled, "quark_timeout": self._quark_timeout,
             "quark_risk_cooldown": self._quark_risk_cooldown,
+            "quark_save_path": self._quark_save_path, "quark_movie_save_path": self._quark_movie_save_path,
+            "strm_enabled": self._strm_enabled, "smartstrm_webhook_url": self._smartstrm_webhook_url,
+            "smartstrm_task": self._smartstrm_task, "smartstrm_xlist_path_fix": self._smartstrm_xlist_path_fix,
+            "strm_retry_max": self._strm_retry_max,
         }
 
     def stop_service(self) -> None:
@@ -293,6 +343,12 @@ class P115TGSub(_PluginBase):
                 "summary": "验证 QuarkDisk 夸克账号连通性",
             },
             {
+                "path": "/test_smartstrm",
+                "endpoint": self.api_test_smartstrm,
+                "methods": ["POST"],
+                "summary": "测试 SmartStrm Webhook 连通性",
+            },
+            {
                 "path": "/clear_plugin_log",
                 "endpoint": self.api_clear_plugin_log,
                 "methods": ["POST"],
@@ -322,15 +378,49 @@ class P115TGSub(_PluginBase):
             "desc": "115 TG订阅追更", "category": "订阅", "data": {"action": "p115_tg_sub_action"},
         }]
 
+    @staticmethod
+    def _sanitize_history(history: Any) -> List[Dict[str, Any]]:
+        """移除旧版本历史中遗留的完整分享 URL；保留去重所需字段。"""
+        output: List[Dict[str, Any]] = []
+        for raw in history or []:
+            if not isinstance(raw, dict):
+                continue
+            item = dict(raw)
+            item.pop("share_url", None)
+            item.pop("url", None)
+            output.append(item)
+        return output
+
     def _do_sync(self) -> bool:
+        # SmartStrm 队列独立于本轮搜索/网盘状态；测试模式不触发任何后处理。
+        if self._quark_handler and not self._dry_run:
+            try:
+                self._quark_handler.process_strm_retry_queue()
+            except Exception as exc:
+                logger.warning(f"SmartStrm 待重试队列处理异常：{exc}")
+
         if not self._telegram_enabled or not self._telegram_client or not self._telegram_client.channels:
             logger.error("Telegram 公开频道搜索未正确配置，无法执行")
             return False
-        if not self._p115_manager:
-            logger.error("115 客户端未初始化，请检查 Cookie 配置")
-            return False
-        if not self._p115_manager.check_login():
-            logger.error("115 登录失败，Cookie 可能已过期")
+        p115_ready = bool(self._p115_manager)
+        if p115_ready:
+            try:
+                p115_ready = bool(self._p115_manager.check_login())
+            except Exception as exc:
+                logger.warning(f"115 登录验证异常：{exc}")
+                p115_ready = False
+        if not p115_ready:
+            logger.warning("115 客户端不可用，本轮跳过 115 并直接尝试夸克兜底")
+
+        quark_ready = bool(self._quark_enabled and self._quark_handler and self._quark_client)
+        if quark_ready:
+            try:
+                quark_ready = bool(self._quark_client.check_login())
+            except Exception as exc:
+                logger.warning(f"夸克登录验证异常：{exc}")
+                quark_ready = False
+        if not p115_ready and not quark_ready:
+            logger.error("115 与夸克客户端均不可用，无法执行订阅追更")
             return False
 
         with SessionFactory() as db:
@@ -343,27 +433,61 @@ class P115TGSub(_PluginBase):
 
         try:
             self._telegram_client.reset_api_call_count()
-            self._p115_manager.reset_api_call_count()
+            if self._p115_manager:
+                self._p115_manager.reset_api_call_count()
+            if self._quark_client:
+                self._quark_client.reset_api_call_count()
         except Exception:
             pass
 
-        history = self.get_data("history") or []
-        transfer_details: List[Dict[str, Any]] = []
-        transferred_count = 0
+        # SmartStrm 待重试队列已在任务入口处理；此处仅开始本轮搜索转存。
+        history = self._sanitize_history(self.get_data("history") or [])
+        transfer_details_115: List[Dict[str, Any]] = []
+        transfer_details_quark: List[Dict[str, Any]] = []
+        transferred_total = 0
+        transferred_115 = 0
+        transferred_quark = 0
         for subscribe in subscribes:
-            if subscribe.type == MediaType.MOVIE.value:
-                transferred_count = self._sync_handler.process_movie_subscribe(subscribe, history, transfer_details, transferred_count)
-            elif subscribe.type == MediaType.TV.value:
-                transferred_count = self._sync_handler.process_tv_subscribe(subscribe, history, transfer_details, transferred_count, set())
-            if transferred_count >= self._max_transfer_per_sync:
+            before_115 = transferred_total
+            if p115_ready and subscribe.type == MediaType.MOVIE.value:
+                transferred_total = self._sync_handler.process_movie_subscribe(
+                    subscribe, history, transfer_details_115, transferred_total
+                )
+            elif p115_ready and subscribe.type == MediaType.TV.value:
+                transferred_total = self._sync_handler.process_tv_subscribe(
+                    subscribe, history, transfer_details_115, transferred_total, set()
+                )
+            transferred_115 += transferred_total - before_115
+
+            # 夸克兜底：115 未补齐且双盘合计未达本轮上限时才尝试。
+            if (
+                quark_ready
+                and transferred_total < self._max_transfer_per_sync
+                and not self._quark_client.transfer_risk_blocked
+            ):
+                before_quark = transferred_total
+                if subscribe.type == MediaType.MOVIE.value:
+                    transferred_total = self._quark_handler.process_movie_subscribe(
+                        subscribe, history, transfer_details_quark, transferred_total
+                    )
+                elif subscribe.type == MediaType.TV.value:
+                    transferred_total = self._quark_handler.process_tv_subscribe(
+                        subscribe, history, transfer_details_quark, transferred_total, set()
+                    )
+                transferred_quark += transferred_total - before_quark
+            if transferred_total >= self._max_transfer_per_sync:
                 break
 
         self.save_data("history", history)
-        logger.info(f"115 TG订阅追更完成，共转存 {transferred_count} 个文件")
+        logger.info(
+            f"115 TG订阅追更完成：115 转存 {transferred_115} 个，夸克转存 {transferred_quark} 个"
+        )
         if self._notify:
-            if transferred_count:
-                self._sync_handler.send_transfer_notification(transfer_details, transferred_count)
-            else:
+            if transferred_115:
+                self._sync_handler.send_transfer_notification(transfer_details_115, transferred_115)
+            if transferred_quark:
+                self._quark_handler.send_transfer_notification(transfer_details_quark, transferred_quark)
+            if not transferred_total:
                 self.post_message(mtype=NotificationType.Plugin, title="【115 TG订阅追更】执行完成", text="本次未发现可转存的匹配资源。")
         return True
 
@@ -407,13 +531,33 @@ class P115TGSub(_PluginBase):
         """只读验证 QuarkDisk 复用凭据，不读取分享、不创建目录、不保存文件。"""
         if apikey != settings.API_TOKEN:
             return {"success": False, "message": "API密钥错误"}
-        if not self._quark_enabled:
-            return {"success": False, "message": "请先启用“验证 QuarkDisk 夸克连通性”并保存配置"}
-        if not self._quark_client:
-            return {"success": False, "message": "夸克客户端未初始化，请检查 QuarkDisk 是否启用且 Cookie 有效"}
-        if self._quark_client.check_login():
+        quark_client = self._quark_client
+        if not quark_client:
+            try:
+                quark_cookie = self._resolve_quark_cookie()
+                if not quark_cookie:
+                    return {"success": False, "message": "未在夸克网盘存储（QuarkDisk）中找到有效 Cookie"}
+                quark_client = QuarkShareClient(
+                    cookie=quark_cookie,
+                    proxy=settings.PROXY,
+                    timeout=self._quark_timeout,
+                    risk_cooldown=self._quark_risk_cooldown,
+                )
+            except Exception as exc:
+                return {"success": False, "message": f"夸克客户端初始化失败：{exc}"}
+        if quark_client.check_login():
             return {"success": True, "message": "夸克连通性验证成功：已复用 QuarkDisk Cookie"}
         return {"success": False, "message": "夸克连通性验证失败，请检查 QuarkDisk Cookie"}
+
+    def api_test_smartstrm(self, apikey: str) -> Dict[str, Any]:
+        """只读测试 SmartStrm Webhook 连通性，不触发任何 STRM 任务。"""
+        if apikey != settings.API_TOKEN:
+            return {"success": False, "message": "API密钥错误"}
+        if not self._strm_enabled:
+            return {"success": False, "message": "请先启用“SmartStrm 增量 STRM 后处理”并保存配置"}
+        if not self._strm_client or not self._strm_client.configured:
+            return {"success": False, "message": "SmartStrm Webhook 未配置"}
+        return self._strm_client.check_connection()
 
     def api_clear_plugin_log(self, apikey: str) -> Dict[str, Any]:
         """仅清理本插件当前及滚动日志，不影响 MoviePilot 主日志或其他插件。"""

@@ -7,7 +7,7 @@ from app.schemas.types import MediaType
 
 
 class SearchHandler:
-    """只使用 Telegram 公开频道搜索 115 分享链接。"""
+    """使用 Telegram 公开频道搜索 115 与夸克分享链接。"""
 
     def __init__(self, telegram_client, telegram_enabled: bool = False) -> None:
         self._telegram_client = telegram_client
@@ -25,6 +25,23 @@ class SearchHandler:
         season: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
         return self.search_single_source("telegram", mediainfo, media_type, season)
+
+    def search_quark_resources(
+        self,
+        mediainfo: MediaInfo,
+        media_type: MediaType,
+        season: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        """搜索夸克分享候选（115 优先策略的兜底源）。"""
+        if not self._telegram_enabled or not self._telegram_client:
+            return []
+        for keyword in self._build_keywords(mediainfo, media_type, season):
+            logger.info(f"使用 Telegram 公开频道搜索夸克资源：{mediainfo.title}，关键词：{keyword!r}")
+            results = self._telegram_client.search_quark_resources(keyword, required_title=mediainfo.title)
+            if results:
+                logger.info(f"Telegram 关键词 {keyword!r} 找到 {len(results)} 个夸克资源")
+                return results
+        return []
 
     def search_single_source(
         self,

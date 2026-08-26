@@ -16,7 +16,7 @@ class UIConfig:
                         "component": "VCol", "props": {"cols": 12}, "content": [{
                             "component": "VAlert", "props": {
                                 "type": "info", "variant": "tonal",
-                                "text": "v1.2：当前稳定支持 Telegram 公开频道的 115 订阅追更；已新增夸克阶段 A 安全适配层，仅用于验证 QuarkDisk 凭据连通性，尚不会从 Telegram 转存夸克资源。"
+                                "text": "v2.0：115 优先、夸克兜底的双网盘订阅追更。Telegram 公开频道先按订阅标题筛选候选；115 有可用资源走 115 链路，否则尝试夸克分享校验与转存；夸克转存成功后由 SmartStrm 在本地增量生成 STRM。"
                             }
                         }]
                     }]
@@ -74,7 +74,7 @@ class UIConfig:
                         "component": "VCol", "props": {"cols": 12}, "content": [{
                             "component": "VAlert", "props": {
                                 "type": "info", "variant": "tonal",
-                                "text": "夸克阶段 A：只复用已安装“夸克网盘存储（QuarkDisk）”的 Cookie 进行连通性验证。不会读取 Telegram 夸克分享、创建目录或保存文件；实际夸克追更将在验证通过后另行开启。"
+                                "text": "夸克链路：运行时复用已安装“夸克网盘存储（QuarkDisk）”的 Cookie，不复制、不展示凭据。仅当 115 链路未找到可用资源时才尝试夸克；同一集不会同时转存到两个网盘。夸克网盘只保存媒体文件，STRM/NFO/图片由 SmartStrm 在本机生成。"
                             }
                         }]
                     }]
@@ -82,9 +82,17 @@ class UIConfig:
                 {
                     "component": "VRow",
                     "content": [
-                        {"component": "VCol", "props": {"cols": 12, "md": 4}, "content": [{"component": "VSwitch", "props": {"model": "quark_enabled", "label": "验证 QuarkDisk 夸克连通性", "hint": "仅初始化夸克适配层；不启用夸克资源转存。"}}]},
-                        {"component": "VCol", "props": {"cols": 12, "md": 4}, "content": [{"component": "VTextField", "props": {"model": "quark_timeout", "label": "夸克请求超时（秒）", "type": "number", "placeholder": "30"}}]},
-                        {"component": "VCol", "props": {"cols": 12, "md": 4}, "content": [{"component": "VTextField", "props": {"model": "quark_risk_cooldown", "label": "夸克风控冷却（秒）", "type": "number", "placeholder": "1800", "hint": "未来转存遇到“频繁/风控/限制”时的停止请求时长。"}}]},
+                        {"component": "VCol", "props": {"cols": 12, "md": 3}, "content": [{"component": "VSwitch", "props": {"model": "quark_enabled", "label": "启用夸克资源追更", "hint": "115 无可用候选时兜底转存夸克；仅验证连通性可随时单独使用详情页按钮。"}}]},
+                        {"component": "VCol", "props": {"cols": 12, "md": 3}, "content": [{"component": "VTextField", "props": {"model": "quark_timeout", "label": "夸克请求超时（秒）", "type": "number", "placeholder": "30"}}]},
+                        {"component": "VCol", "props": {"cols": 12, "md": 3}, "content": [{"component": "VTextField", "props": {"model": "quark_risk_cooldown", "label": "夸克风控冷却（秒）", "type": "number", "placeholder": "1800", "hint": "遇到“频繁/风控/限制/封禁”时停止转存的时长。"}}]},
+                        {"component": "VCol", "props": {"cols": 12, "md": 3}, "content": [{"component": "VTextField", "props": {"model": "batch_size", "label": "批量转存大小", "type": "number", "placeholder": "10"}}]},
+                    ],
+                },
+                {
+                    "component": "VRow",
+                    "content": [
+                        {"component": "VCol", "props": {"cols": 12, "md": 6}, "content": [{"component": "VTextField", "props": {"model": "quark_save_path", "label": "夸克电视剧转存目录", "placeholder": "/夸克接收/MoviePilot-TG/TV", "hint": "SmartStrm 夸克驱动任务应能扫描到该目录。", "persistent-hint": True}}]},
+                        {"component": "VCol", "props": {"cols": 12, "md": 6}, "content": [{"component": "VTextField", "props": {"model": "quark_movie_save_path", "label": "夸克电影转存目录", "placeholder": "/夸克接收/MoviePilot-TG/Movie"}}]},
                     ],
                 },
                 {
@@ -93,10 +101,25 @@ class UIConfig:
                         "component": "VCol", "props": {"cols": 12}, "content": [{
                             "component": "VAlert", "props": {
                                 "type": "info", "variant": "tonal",
-                                "text": "Telegram 只访问公开搜索页 https://t.me/s/<频道>?q=<片名>。每行填写一个频道用户名或公开 t.me 链接；lsp115 等“查看资源”频道会按限额访问对应 Telegraph 页面。"
+                                "text": "SmartStrm 后处理：夸克文件转存并二次确认存在后，本插件调用 SmartStrm Webhook 增量生成目标目录的 STRM。Webhook 地址从 SmartStrm“系统设置-Webhook”获取；只读测试不会触发任务。失败仅进入待重试队列，绝不重复网盘转存。"
                             }
                         }]
                     }]
+                },
+                {
+                    "component": "VRow",
+                    "content": [
+                        {"component": "VCol", "props": {"cols": 12, "md": 4}, "content": [{"component": "VSwitch", "props": {"model": "strm_enabled", "label": "启用 SmartStrm 增量 STRM 后处理", "hint": "需要夸克转存目录与 SmartStrm 任务可访问。"}}]},
+                        {"component": "VCol", "props": {"cols": 12, "md": 4}, "content": [{"component": "VTextField", "props": {"model": "smartstrm_task", "label": "SmartStrm 任务名", "placeholder": "tv,movie", "hint": "逗号分隔多个任务名。", "persistent-hint": True}}]},
+                        {"component": "VCol", "props": {"cols": 12, "md": 4}, "content": [{"component": "VTextField", "props": {"model": "strm_retry_max", "label": "Webhook 最大重试次数", "type": "number", "placeholder": "5"}}]},
+                    ],
+                },
+                {
+                    "component": "VRow",
+                    "content": [
+                        {"component": "VCol", "props": {"cols": 12, "md": 6}, "content": [{"component": "VTextField", "props": {"model": "smartstrm_webhook_url", "label": "SmartStrm Webhook 地址", "type": "password", "placeholder": "https://smartstrm:8024/api/webhook/...", "hint": "敏感凭据：仅保存在 MoviePilot 配置中，不写入日志、通知或仓库。", "persistent-hint": True}}]},
+                        {"component": "VCol", "props": {"cols": 12, "md": 6}, "content": [{"component": "VTextField", "props": {"model": "smartstrm_xlist_path_fix", "label": "OpenList 路径映射（可选）", "placeholder": "/quark:/", "hint": "SmartStrm 使用夸克网盘驱动时留空；使用 OpenList 驱动时填“挂载路径:夸克根目录”。"}}]},
+                    ],
                 },
                 {
                     "component": "VRow",
@@ -118,16 +141,21 @@ class UIConfig:
                 },
                 {
                     "component": "VRow",
-                    "content": [
-                        {"component": "VCol", "props": {"cols": 12, "md": 4}, "content": [{"component": "VSwitch", "props": {"model": "dry_run", "label": "测试模式（只验证，不转存）", "hint": "首次使用必须保持开启；关闭后才会实际转存并更新订阅。"}}]},
-                        {"component": "VCol", "props": {"cols": 12, "md": 4}, "content": [{"component": "VTextField", "props": {"model": "max_transfer_per_sync", "label": "单次同步最大转存文件数", "type": "number", "placeholder": "20"}}]},
-                        {"component": "VCol", "props": {"cols": 12, "md": 4}, "content": [{"component": "VTextField", "props": {"model": "batch_size", "label": "批量转存大小", "type": "number", "placeholder": "10"}}]},
-                    ],
+                    "content": [{
+                        "component": "VCol", "props": {"cols": 12}, "content": [{
+                            "component": "VAlert", "props": {
+                                "type": "info", "variant": "tonal",
+                                "text": "Telegram 只访问公开搜索页 https://t.me/s/<频道>?q=<片名>。每行填写一个频道用户名或公开 t.me 链接；lsp115 等“查看资源”频道会按限额访问对应 Telegraph 页面。"
+                            }
+                        }]
+                    }]
                 },
                 {
                     "component": "VRow",
                     "content": [
-                        {"component": "VCol", "props": {"cols": 12, "md": 4}, "content": [{"component": "VSwitch", "props": {"model": "skip_other_season_dirs", "label": "跳过其他季目录", "hint": "减少 115 API 调用；搜索不到时可关闭。"}}]},
+                        {"component": "VCol", "props": {"cols": 12, "md": 4}, "content": [{"component": "VSwitch", "props": {"model": "dry_run", "label": "测试模式（只验证，不转存）", "hint": "首次使用必须保持开启；关闭后才会实际转存并更新订阅、触发 SmartStrm。"}}]},
+                        {"component": "VCol", "props": {"cols": 12, "md": 4}, "content": [{"component": "VTextField", "props": {"model": "max_transfer_per_sync", "label": "单次同步最大转存文件数", "type": "number", "placeholder": "20"}}]},
+                        {"component": "VCol", "props": {"cols": 12, "md": 4}, "content": [{"component": "VSwitch", "props": {"model": "skip_other_season_dirs", "label": "跳过其他季目录", "hint": "减少网盘 API 调用；搜索不到时可关闭。"}}]},
                     ],
                 },
                 {
@@ -150,6 +178,9 @@ class UIConfig:
             "telegram_timeout": 20, "telegram_max_results": 10, "telegram_max_telegraph_pages": 3,
             "max_transfer_per_sync": 20, "batch_size": 10, "skip_other_season_dirs": True, "dry_run": True,
             "quark_enabled": False, "quark_timeout": 30, "quark_risk_cooldown": 1800,
+            "quark_save_path": "/夸克接收/MoviePilot-TG/TV", "quark_movie_save_path": "/夸克接收/MoviePilot-TG/Movie",
+            "strm_enabled": False, "smartstrm_webhook_url": "", "smartstrm_task": "tv,movie",
+            "smartstrm_xlist_path_fix": "", "strm_retry_max": 5,
         }
         return form, defaults
 
@@ -168,7 +199,7 @@ class UIConfig:
                         "component": "VAlert",
                         "props": {
                             "type": "info", "variant": "tonal",
-                            "text": f"115 TG订阅追更 · 已记录 {recent_count} 条转存结果。立即运行仅处理 115 待处理订阅；夸克目前仅可进行独立的只读连通性验证。",
+                            "text": f"115 TG订阅追更 · 已记录 {recent_count} 条转存结果。立即运行会按“115 优先、夸克兜底”处理全部待处理订阅；夸克与 SmartStrm 连通性可独立验证。",
                         },
                     },
                     {
@@ -185,7 +216,7 @@ class UIConfig:
                                 }],
                             },
                             {
-                                "component": "VCol", "props": {"cols": 12, "md": 4},
+                                "component": "VCol", "props": {"cols": 12, "md": 3},
                                 "content": [{
                                     "component": "VBtn",
                                     "props": {"color": "secondary", "variant": "outlined", "prepend-icon": "mdi-cloud-check-outline"},
@@ -194,7 +225,16 @@ class UIConfig:
                                 }],
                             },
                             {
-                                "component": "VCol", "props": {"cols": 12, "md": 4},
+                                "component": "VCol", "props": {"cols": 12, "md": 3},
+                                "content": [{
+                                    "component": "VBtn",
+                                    "props": {"color": "teal", "variant": "outlined", "prepend-icon": "mdi-webhook"},
+                                    "text": "测试 SmartStrm",
+                                    "events": {"click": {"api": f"/plugin/P115TGSub/test_smartstrm?apikey={settings.API_TOKEN}", "method": "post"}},
+                                }],
+                            },
+                            {
+                                "component": "VCol", "props": {"cols": 12, "md": 3},
                                 "content": [{
                                     "component": "VBtn",
                                     "props": {"color": "error", "variant": "outlined", "prepend-icon": "mdi-delete-sweep"},

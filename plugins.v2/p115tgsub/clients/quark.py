@@ -9,7 +9,7 @@ import re
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 from urllib.parse import parse_qs, urlsplit
 
 import requests
@@ -55,17 +55,18 @@ class QuarkShareClient:
     """夸克公开分享的只读校验与指定文件转存客户端。"""
 
     DRIVE_PC_BASE_URL = "https://drive-pc.quark.cn/1/clouddrive"
-    SHARE_PAGE_BASE_URL = "https://drive-h.quark.cn/1/clouddrive"
-    SHARE_SAVE_BASE_URL = "https://drive.quark.cn/1/clouddrive"
+    SHARE_PAGE_BASE_URL = DRIVE_PC_BASE_URL
+    SHARE_SAVE_BASE_URL = DRIVE_PC_BASE_URL
     _SHARE_URL_RE = re.compile(
         r"(?:https?://pan\.quark\.cn/s/|quark://share/)([A-Za-z0-9]+)",
         re.IGNORECASE,
     )
     _PASSWORD_RE = re.compile(
-        r"(?:提取码|密码|passcode|code)\s*[：:=]?\s*([A-Za-z0-9]{4,16})",
+        r"(?:提取码|访问码|密码|passcode|code)\s*[：:=]?\s*([A-Za-z0-9]{4,16})",
         re.IGNORECASE,
     )
     _RISK_MARKERS = ("封禁", "风控", "限制", "频繁")
+    _PAGE_SIZE = 50
 
     def __init__(
         self,
@@ -135,11 +136,15 @@ class QuarkShareClient:
 
     @staticmethod
     def _is_success(response: Any) -> bool:
-        if not isinstance(response, dict):
+        if not isinstance(response, dict) or not response:
+            return False
+        status = response.get("status")
+        code = response.get("code")
+        if status is None and code is None:
             return False
         return (
-            response.get("status") in (None, 0, "0", 200, "200", 2000000, "2000000")
-            and response.get("code") in (None, 0, "0", 200, "200")
+            status in (None, 0, "0", 200, "200", 2000000, "2000000")
+            and code in (None, 0, "0", 200, "200")
         )
 
     @staticmethod
@@ -190,8 +195,9 @@ class QuarkShareClient:
                     except ValueError:
                         body = {}
                     return {
-                        "status": body.get("status", response.status_code),
-                        "code": body.get("code", response.status_code),
+                        # HTTP 失败必须固定视为失败，不能让响应体内的业务字段覆盖状态。
+                        "status": response.status_code,
+                        "code": response.status_code,
                         "message": body.get("message") or body.get("msg") or f"HTTP {response.status_code}",
                         "data": body.get("data") or {},
                     }
@@ -235,13 +241,12 @@ class QuarkShareClient:
             json_data={
                 "pwd_id": info["share_id"],
                 "passcode": info.get("password") or "",
-                "support_visit_limit_private_share": True,
             },
             base_url=self.SHARE_PAGE_BASE_URL,
         )
         token = str((self._data(result) or {}).get("stoken") or "")
         if not self._is_success(result) or not token:
-            raise RuntimeError(str(result.get("message") or "获取夸克分享访问令牌失败"))
+            raise RuntimeError("获取夸克分享访问令牌失败")
         with self._cache_lock:
             self._share_tokens[cache_key] = (token, now + 600)
         return token
@@ -255,6 +260,8 @@ class QuarkShareClient:
                 "pwd_id": share_id, "stoken": stoken, "pdir_fid": parent_id,
                 "force": "0", "_page": page, "_size": size,
                 "_fetch_total": "1", "_sort": "file_type:asc,file_name:asc",
+                "ver": "2", "_fetch_banner": "0", "_fetch_share": "0",
+                "fetch_share_full_path": "0",
             },
             base_url=self.SHARE_PAGE_BASE_URL,
         )
@@ -268,9 +275,12 @@ class QuarkShareClient:
         if file_id in (None, "") or not name:
             return None
         file_type = raw.get("file_type")
-        is_dir = bool(raw.get("dir") or raw.get("is_dir") or file_type in (0, "0"))
-        if file_type not in (None, 0, "0"):
-            is_dir = False
+        # QAS 以 dir 字段作为目录真值；仅在接口未提供 dir/is_dir 时，才以
+        # 已验证的 file_type=0 作为兼容兜底，绝不让 file_type 覆盖显式 dir。
+        if raw.get("dir") is not None or raw.get("is_dir") is not None:
+            is_dir = bool(raw.get("dir") or raw.get("is_dir"))
+        else:
+            is_dir = file_type in (0, "0")
         return {
             "id": str(file_id), "name": name, "is_dir": is_dir,
             "size": 0 if is_dir else int(raw.get("size") or raw.get("file_size") or 0),
@@ -288,6 +298,28 @@ class QuarkShareClient:
                 return value
         return []
 
+    @classmethod
+    def _response_total(cls, response: Dict[str, Any]) -> Optional[int]:
+        data = cls._data(response)
+        metadata = response.get("metadata") if isinstance(response, dict) else None
+        for value in (
+            (metadata or {}).get("_total") if isinstance(metadata, dict) else None,
+            data.get("total") if isinstance(data, dict) else None,
+        ):
+            try:
+                total = int(value)
+            except (TypeError, ValueError):
+                continue
+            if total >= 0:
+                return total
+        return None
+
+    @classmethod
+    def _has_more_pages(cls, response: Dict[str, Any], received: int, loaded: int, page_size: int) -> bool:
+        """优先使用夸克返回的总数分页；缺失时再按请求页大小保守判断。"""
+        total = cls._response_total(response)
+        return loaded < total if total is not None else received >= page_size
+
     def check_share_status(self, share_url: str, password: str = "") -> QuarkShareLinkStatus:
         status = QuarkShareLinkStatus()
         info = self.extract_share_info(share_url, password)
@@ -298,15 +330,35 @@ class QuarkShareClient:
             stoken = self._get_share_token(info)
             result = self._get_share_page(info["share_id"], stoken, size=1)
             if not self._is_success(result):
-                status.error_message = str(result.get("message") or "夸克分享不可用")
+                status.error_message = "夸克分享不可用或访问码错误"
                 return status
             data = self._data(result)
             status.is_valid = True
-            status.file_count = int(data.get("total") or 0) if isinstance(data, dict) else 0
+            status.file_count = self._response_total(result) or 0
             status.share_info = {"share_title": str(data.get("title") or "") if isinstance(data, dict) else ""}
         except Exception as exc:
             status.error_message = str(exc) or type(exc).__name__
         return status
+
+    @staticmethod
+    def _should_skip_season_dir(dir_name: str, target_season: int) -> bool:
+        patterns = [
+            r"[Ss]eason\s*(\d+)", r"[Ss](\d+)", r"第\s*(\d+)\s*季",
+            r"第\s*([一二三四五六七八九十]+)\s*季",
+        ]
+        cn_num_map = {"一": 1, "二": 2, "三": 3, "四": 4, "五": 5,
+                      "六": 6, "七": 7, "八": 8, "九": 9, "十": 10}
+        for pattern in patterns:
+            match = re.search(pattern, str(dir_name or ""), re.IGNORECASE)
+            if not match:
+                continue
+            value = match.group(1)
+            try:
+                found_season = cn_num_map[value] if value in cn_num_map else int(value)
+            except ValueError:
+                continue
+            return found_season != int(target_season)
+        return False
 
     def list_share_files(
         self, share_url: str, password: str = "", max_depth: int = 3, target_season: Optional[int] = None
@@ -323,10 +375,13 @@ class QuarkShareClient:
             while stack:
                 parent_id, depth, target = stack.pop()
                 page = 1
+                loaded = 0
                 while True:
-                    result = self._get_share_page(info["share_id"], stoken, parent_id, page)
+                    result = self._get_share_page(
+                        info["share_id"], stoken, parent_id, page, self._PAGE_SIZE
+                    )
                     if not self._is_success(result):
-                        raise RuntimeError(str(result.get("message") or "读取夸克分享目录失败"))
+                        raise RuntimeError("读取夸克分享目录失败")
                     raw_items = self._page_items(self._data(result))
                     for raw in raw_items:
                         item = self._to_file(raw)
@@ -334,6 +389,9 @@ class QuarkShareClient:
                             continue
                         target.append(item)
                         if item["is_dir"] and depth < max(1, min(int(max_depth), 5)):
+                            if target_season and self._should_skip_season_dir(item["name"], target_season):
+                                item.pop("_share_fid_token", None)
+                                continue
                             children: List[Dict[str, Any]] = []
                             item["children"] = children
                             stack.append((item["id"], depth + 1, children))
@@ -341,31 +399,49 @@ class QuarkShareClient:
                             file_tokens[item["id"]] = {"token": item.pop("_share_fid_token", ""), "parent_id": parent_id}
                         else:
                             item.pop("_share_fid_token", None)
-                    if len(raw_items) < 100:
+                    if not self._has_more_pages(result, len(raw_items), loaded + len(raw_items), self._PAGE_SIZE):
                         break
+                    loaded += len(raw_items)
                     page += 1
             with self._cache_lock:
-                self._share_items[info["share_id"]] = file_tokens
+                self._share_items[self._share_cache_key(info)] = file_tokens
             return output
         except Exception as exc:
             logger.warning(f"读取夸克分享文件失败：{type(exc).__name__}")
             return []
 
+    def _list_personal_directory(self, parent_id: str) -> Optional[List[Dict[str, Any]]]:
+        """分页读取夸克个人网盘单层目录；接口失败返回 None。"""
+        output: List[Dict[str, Any]] = []
+        page = 1
+        loaded = 0
+        while True:
+            result = self._request(
+                "GET", "file/sort",
+                params={"pdir_fid": parent_id, "_page": page, "_size": self._PAGE_SIZE, "_sort": "file_name:asc"},
+            )
+            if not self._is_success(result):
+                return None
+            raw_items = self._page_items(self._data(result))
+            for raw in raw_items:
+                item = self._to_file(raw)
+                if item:
+                    output.append(item)
+            if not self._has_more_pages(result, len(raw_items), loaded + len(raw_items), self._PAGE_SIZE):
+                break
+            loaded += len(raw_items)
+            page += 1
+        return output
+
     def _resolve_directory(self, path: str, create: bool = True) -> Optional[str]:
         """逐级解析夸克个人网盘目录；仅在真实转存阶段调用。"""
         current_id = "0"
         for part in (value for value in str(path or "/").split("/") if value):
-            result = self._request(
-                "GET", "file/sort",
-                params={"pdir_fid": current_id, "_page": 1, "_size": 100, "_sort": "file_name:asc"},
-            )
-            if not self._is_success(result):
+            entries = self._list_personal_directory(current_id)
+            if entries is None:
                 return None
             found = next(
-                (
-                    self._to_file(raw) for raw in self._page_items(self._data(result))
-                    if (item := self._to_file(raw)) and item["is_dir"] and item["name"] == part
-                ),
+                (item for item in entries if item["is_dir"] and item["name"] == part),
                 None,
             )
             if found:
@@ -387,20 +463,79 @@ class QuarkShareClient:
             current_id = item["id"]
         return current_id
 
-    def _save_shared_files(self, info: Dict[str, str], stoken: str, file_ids: List[str], target_id: str, file_tokens: List[str]) -> Dict[str, Any]:
+    def get_pid_by_path(self, path: str, mkdir: bool = True) -> Any:
+        """兼容 FileMatcher 目录检查：返回目录 ID，不存在时返回 -1。"""
+        try:
+            directory_id = self._resolve_directory(path, create=bool(mkdir))
+        except Exception as exc:
+            logger.warning(f"夸克解析目录失败：{type(exc).__name__}")
+            return -1
+        return directory_id or -1
+
+    def list_files(self, path: str) -> List[Dict[str, Any]]:
+        """列出夸克个人网盘目录内容，返回与 115 兼容的字段（n/fid/size）。"""
+        parent_id = self._resolve_directory(path, create=False)
+        if not parent_id:
+            return []
+        entries = self._list_personal_directory(parent_id)
+        if entries is None:
+            return []
+        output: List[Dict[str, Any]] = []
+        for item in entries:
+            output.append({
+                "n": item["name"],
+                "fid": "0" if item["is_dir"] else item["id"],
+                "size": int(item.get("size") or 0),
+            })
+        return output
+
+    def confirm_files_exist(self, save_path: str, file_names: Iterable[str], retries: int = 3, interval: float = 2.0) -> Set[str]:
+        """目标目录二次确认：转存成功与否以文件真实存在为准。"""
+        wanted = set(str(value) for value in file_names if str(value))
+        if not wanted:
+            return set()
+        attempts = max(1, min(int(retries), 6))
+        delay = max(0.5, min(float(interval), 10.0))
+        existing: Set[str] = set()
+        for attempt in range(attempts):
+            existing = set()
+            for entry in self.list_files(save_path):
+                name = str(entry.get("n") or "")
+                if name in wanted:
+                    existing.add(name)
+            if wanted.issubset(existing):
+                return existing
+            if attempt + 1 < attempts:
+                time.sleep(delay)
+        return existing
+
+    def _save_shared_files(
+        self, info: Dict[str, str], stoken: str, file_ids: List[str], target_id: str,
+        file_tokens: List[str],
+    ) -> Dict[str, Any]:
         payload: Dict[str, Any] = {
             "fid_list": file_ids, "fid_token_list": file_tokens,
             "to_pdir_fid": target_id, "pwd_id": info["share_id"],
             "stoken": stoken, "pdir_fid": "0", "scene": "link",
         }
-        return self._request("POST", "share/sharepage/save", json_data=payload, base_url=self.SHARE_SAVE_BASE_URL, retries=0)
+        return self._request(
+            "POST", "share/sharepage/save", json_data=payload,
+            params={"app": "clouddrive"},
+            base_url=self.SHARE_SAVE_BASE_URL, retries=0,
+        )
 
     def _wait_for_task(self, task_id: str, timeout: int = 60) -> bool:
         deadline = time.monotonic() + max(5, min(int(timeout), 180))
         retry_index = 0
         while time.monotonic() < deadline:
             result = self._request("GET", "task", params={"task_id": task_id, "retry_index": retry_index})
+            if not self._is_success(result):
+                return False
             task_status = (self._data(result) or {}).get("status")
+            try:
+                task_status = int(task_status)
+            except (TypeError, ValueError):
+                task_status = -1
             if task_status == 2:
                 return True
             if task_status == 3:
@@ -422,12 +557,24 @@ class QuarkShareClient:
         info = self.extract_share_info(share_url, password)
         if not info:
             return [], selected
-        if not self.list_share_files(share_url, password=password):
-            return [], selected
+        cache_key = self._share_cache_key(info)
         with self._cache_lock:
-            cached = dict(self._share_items.get(info["share_id"], {}))
-        tokens = [str((cached.get(file_id) or {}).get("token") or "") for file_id in selected]
-        if not all(tokens):
+            cached = dict(self._share_items.get(cache_key, {}))
+        if not all((cached.get(file_id) or {}).get("token") for file_id in selected):
+            if not self.list_share_files(share_url, password=password):
+                return [], selected
+            with self._cache_lock:
+                cached = dict(self._share_items.get(cache_key, {}))
+
+        records = [
+            {
+                "id": file_id,
+                "token": str((cached.get(file_id) or {}).get("token") or ""),
+                "parent_id": str((cached.get(file_id) or {}).get("parent_id") or "0"),
+            }
+            for file_id in selected
+        ]
+        if not all(record["token"] for record in records):
             logger.warning("夸克分享候选缺少临时文件令牌，已停止保存")
             return [], selected
         target_id = self._resolve_directory(save_path, create=True)
@@ -438,9 +585,10 @@ class QuarkShareClient:
         succeeded: List[str] = []
         failed: List[str] = []
         step = max(1, min(int(batch_size or 5), 20))
-        for offset in range(0, len(selected), step):
-            batch = selected[offset:offset + step]
-            token_batch = tokens[offset:offset + step]
+        for offset in range(0, len(records), step):
+            batch_records = records[offset:offset + step]
+            batch = [record["id"] for record in batch_records]
+            token_batch = [record["token"] for record in batch_records]
             result = self._save_shared_files(info, stoken, batch, target_id, token_batch)
             task_id = str((self._data(result) or {}).get("task_id") or "")
             success = self._is_success(result) and (not task_id or self._wait_for_task(task_id))

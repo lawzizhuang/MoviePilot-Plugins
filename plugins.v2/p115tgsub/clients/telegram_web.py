@@ -1,4 +1,4 @@
-"""Telegram 公开频道搜索客户端（仅提取 115 分享链接）。"""
+"""Telegram 公开频道搜索客户端（提取 115 与夸克分享链接）。"""
 from __future__ import annotations
 
 import html
@@ -7,8 +7,8 @@ import time
 import unicodedata
 from dataclasses import dataclass, field
 from html.parser import HTMLParser
-from typing import Any, Dict, Iterable, List, Optional, Sequence
-from urllib.parse import quote, unquote, urlsplit, urlunsplit
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from urllib.parse import quote, unquote, urlsplit
 
 import requests
 
@@ -131,6 +131,7 @@ class TelegramWebClient:
         "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131 Safari/537.36"
     )
     _115_HOSTS = {"115.com", "115cdn.com", "anxia.com"}
+    _QUARK_HOSTS = {"pan.quark.cn"}
     _URL_RE = re.compile(r"https?://[^\s<>\"'，。；;]+", re.IGNORECASE)
     _TRAILING_URL_CHARS = ".,，。;；:：!！?？)]}〉》\"'"
 
@@ -149,6 +150,7 @@ class TelegramWebClient:
         self.max_telegraph_pages = max(0, min(int(max_telegraph_pages or 3), 10))
         self.telegraph_delay = max(0.0, min(float(telegraph_delay or 0), 5.0))
         self._api_call_count = 0
+        self._page_cache: Dict[str, str] = {}
         self._proxies = proxy if isinstance(proxy, dict) else ({"http": proxy, "https": proxy} if proxy else None)
         self._session = requests.Session()
         self._session.headers.update({"User-Agent": self.USER_AGENT, "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8"})
@@ -189,6 +191,14 @@ class TelegramWebClient:
             return False
 
     @classmethod
+    def _is_quark_url(cls, url: str) -> bool:
+        try:
+            host = (urlsplit(url).hostname or "").lower()
+            return any(host == allowed or host.endswith(f".{allowed}") for allowed in cls._QUARK_HOSTS)
+        except Exception:
+            return False
+
+    @classmethod
     def _is_telegraph_url(cls, url: str) -> bool:
         try:
             host = (urlsplit(url).hostname or "").lower()
@@ -204,19 +214,33 @@ class TelegramWebClient:
         return value.rstrip("&")
 
     @classmethod
-    def _extract_urls(cls, text: str, links: Iterable[str] = ()) -> List[str]:
+    def _extract_links(cls, text: str, links: Iterable[str], kinds: Sequence[str]) -> List[str]:
         candidates = list(links or []) + cls._URL_RE.findall(html.unescape(text or ""))
         output: List[str] = []
         seen = set()
+        want_115 = "115" in kinds
+        want_quark = "quark" in kinds
         for raw in candidates:
             url = cls._clean_url(raw)
-            if not cls._is_115_url(url):
+            is_115 = want_115 and cls._is_115_url(url)
+            is_quark = want_quark and cls._is_quark_url(url)
+            if not is_115 and not is_quark:
                 continue
             key = url.lower()
             if key not in seen:
                 seen.add(key)
                 output.append(url)
         return output
+
+    @classmethod
+    def _extract_urls(cls, text: str, links: Iterable[str] = ()) -> List[str]:
+        """仅提取 115 分享链接（兼容既有调用与测试）。"""
+        return cls._extract_links(text, links, ("115",))
+
+    @classmethod
+    def _extract_quark_urls(cls, text: str, links: Iterable[str] = ()) -> List[str]:
+        """仅提取 pan.quark.cn 分享链接。"""
+        return cls._extract_links(text, links, ("quark",))
 
     @classmethod
     def _extract_telegraph_urls(cls, links: Iterable[str]) -> List[str]:
@@ -231,14 +255,19 @@ class TelegramWebClient:
 
     def reset_api_call_count(self) -> None:
         self._api_call_count = 0
+        self._page_cache.clear()
 
     def _get(self, url: str) -> Optional[str]:
+        cached = self._page_cache.get(url)
+        if cached is not None:
+            return cached
         try:
             self._api_call_count += 1
             response = self._session.get(url, timeout=self.timeout, proxies=self._proxies)
             if response.status_code != 200:
-                logger.warning(f"Telegram 公开页请求失败：HTTP {response.status_code} - {url}")
+                logger.warning(f"Telegram 公开页请求失败：HTTP {response.status_code}")
                 return None
+            self._page_cache[url] = response.text
             return response.text
         except requests.RequestException as exc:
             logger.warning(f"Telegram 公开页请求失败：{exc}")
@@ -313,33 +342,51 @@ class TelegramWebClient:
                 break
         return messages
 
-    def _extract_telegraph_115_links(self, url: str) -> List[str]:
+    def _extract_telegraph_page(self, url: str, kind: str) -> Tuple[List[str], str]:
         page = self._get(url)
         if not page:
-            return []
+            return [], ""
         parser = _PageTextAndLinksParser()
         try:
             parser.feed(page)
             parser.close()
         except Exception as exc:
             logger.warning(f"解析 Telegraph 资源页失败：{exc}")
-            return []
+            return [], ""
         text = " ".join("".join(parser.text_parts).split())
-        return self._extract_urls(text, parser.links)
+        extractor = self._extract_urls if kind == "115" else self._extract_quark_urls
+        return extractor(text, parser.links), text
+
+    def _extract_telegraph_links(self, url: str, kind: str) -> List[str]:
+        links, _ = self._extract_telegraph_page(url, kind)
+        return links
+
+    def _extract_telegraph_115_links(self, url: str) -> List[str]:
+        """兼容既有调用：仅提取 Telegraph 中的 115 链接。"""
+        return self._extract_telegraph_links(url, "115")
 
     @staticmethod
     def _message_matches_keyword(message: TelegramMessage, keyword: str) -> bool:
         """Telegraph 二跳前先确认消息文本包含搜索关键词，避免无关页面请求。"""
         expected = re.sub(r"[\W_]+", "", str(keyword or "").casefold())
         actual = re.sub(r"[\W_]+", "", str(message.text or "").casefold())
-        return len(expected) >= 2 and expected in actual
+        return bool(expected) and expected in actual
 
     def search_115_resources(self, keyword: str, required_title: str = "") -> List[Dict[str, str]]:
         """搜索所有已配置频道，返回标题已初筛的 115 资源格式。"""
+        return self._search_links(keyword, required_title, "115")
+
+    def search_quark_resources(self, keyword: str, required_title: str = "") -> List[Dict[str, str]]:
+        """搜索所有已配置频道，返回标题已初筛的 pan.quark.cn 资源格式。"""
+        return self._search_links(keyword, required_title, "quark")
+
+    def _search_links(self, keyword: str, required_title: str, kind: str) -> List[Dict[str, str]]:
+        """按资源类型（115/quark）搜索全部频道并返回候选。"""
         if not self.channels:
             logger.warning("Telegram 搜索源未配置公开频道")
             return []
 
+        extractor = self._extract_urls if kind == "115" else self._extract_quark_urls
         results: List[Dict[str, str]] = []
         seen_share_urls = set()
         for channel in self.channels:
@@ -350,7 +397,8 @@ class TelegramWebClient:
 
             telegraph_used = 0
             for message in messages:
-                direct_links = self._extract_urls(message.text, message.links)
+                direct_links = extractor(message.text, message.links)
+                link_texts = {self._clean_url(link).lower(): message.text for link in direct_links}
                 if (
                     not direct_links
                     and message.telegraph_links
@@ -361,7 +409,12 @@ class TelegramWebClient:
                         if telegraph_used >= self.max_telegraph_pages:
                             break
                         telegraph_used += 1
-                        direct_links.extend(self._extract_telegraph_115_links(telegraph_url))
+                        page_links, page_text = self._extract_telegraph_page(telegraph_url, kind)
+                        for page_link in page_links:
+                            direct_links.append(page_link)
+                            link_texts[self._clean_url(page_link).lower()] = " ".join(
+                                value for value in (message.text, page_text) if value
+                            )
                         if self.telegraph_delay:
                             time.sleep(self.telegraph_delay)
 
@@ -377,7 +430,8 @@ class TelegramWebClient:
                         "channel": message.channel,
                         "message_id": message.message_id,
                         "message_url": message.message_url,
+                        "text": link_texts.get(normalized_url.lower(), message.text or ""),
                     })
 
-        logger.info(f"Telegram 公开频道搜索“{keyword}”完成，找到 {len(results)} 个 115 分享链接")
+        logger.info(f"Telegram 公开频道搜索“{keyword}”完成，找到 {len(results)} 个 {kind} 分享链接")
         return results

@@ -48,8 +48,10 @@ class _Session:
 
     def __init__(self, pages):
         self.pages = pages
+        self.calls = []
 
     def get(self, url, **kwargs):
+        self.calls.append(url)
         return _Response(self.pages[url])
 
 
@@ -131,9 +133,82 @@ def test_title_filter_runs_before_result_limit():
     assert [item["url"] for item in results] == ["https://115.com/s/right"]
 
 
+def test_quark_links_are_extracted_and_password_in_text():
+    search_url = "https://t.me/s/QukanMovie?q=%E4%B8%89%E4%BD%93"
+    search_html = '''
+    <div class="tgme_widget_message_wrap"><div class="tgme_widget_message" data-post="QukanMovie/3">
+      <div class="tgme_widget_message_text">三体 (2026) 提取码：aB12
+        <a href="https://pan.quark.cn/s/Qk123456">夸克</a>
+        <a href="https://115.com/s/ignore">115</a>
+      </div>
+    </div></div>
+    '''
+    client = TelegramWebClient(["QukanMovie"])
+    client._session = _Session({search_url: search_html})
+
+    results = client.search_quark_resources("三体", required_title="三体")
+
+    assert len(results) == 1
+    assert results[0]["url"] == "https://pan.quark.cn/s/Qk123456"
+    assert "提取码：aB12" in results[0]["text"]
+    # 115 源不受影响，且不包含夸克链接
+    assert client.search_115_resources("三体", required_title="三体")[0]["url"] == "https://115.com/s/ignore"
+
+
+def test_quark_url_with_query_password():
+    client = TelegramWebClient(["QukanMovie"])
+    assert client._extract_quark_urls("https://pan.quark.cn/s/Qk654321?pwd=cd34", []) == [
+        "https://pan.quark.cn/s/Qk654321?pwd=cd34"
+    ]
+    assert client._extract_urls("https://pan.quark.cn/s/Qk654321?pwd=cd34", []) == []
+
+
+def test_telegraph_quark_link_and_access_code_are_extracted():
+    search_url = "https://t.me/s/QukanMovie?q=%E4%B8%89%E4%BD%93"
+    telegraph_url = "https://telegra.ph/quark-resource"
+    search_html = f'''
+    <div class="tgme_widget_message_wrap"><div class="tgme_widget_message" data-post="QukanMovie/4">
+      <div class="tgme_widget_message_text">三体 (2026) <a href="{telegraph_url}">查看资源</a></div>
+    </div></div>
+    '''
+    telegraph_html = '''
+    <article>访问码：Zx90 <a href="https://pan.quark.cn/s/QkTelegraph">夸克资源</a></article>
+    '''
+    client = TelegramWebClient(["QukanMovie"])
+    session = _Session({search_url: search_html, telegraph_url: telegraph_html})
+    client._session = session
+
+    results = client.search_quark_resources("三体", required_title="三体")
+
+    assert results[0]["url"] == "https://pan.quark.cn/s/QkTelegraph"
+    assert "访问码：Zx90" in results[0]["text"]
+    # 同步轮内随后搜索 115 时复用 Telegram 搜索页缓存，不重复发起该 URL 请求。
+    client.search_115_resources("三体", required_title="三体")
+    assert session.calls.count(search_url) == 1
+
+
+def test_single_character_title_can_follow_telegraph():
+    search_url = "https://t.me/s/QukanMovie?q=%E8%9D%89"
+    telegraph_url = "https://telegra.ph/single-title"
+    search_html = f'''
+    <div class="tgme_widget_message_wrap"><div class="tgme_widget_message" data-post="QukanMovie/5">
+      <div class="tgme_widget_message_text">蝉 (2026) <a href="{telegraph_url}">查看资源</a></div>
+    </div></div>
+    '''
+    telegraph_html = '<a href="https://pan.quark.cn/s/QkSingle">夸克</a>'
+    client = TelegramWebClient(["QukanMovie"])
+    client._session = _Session({search_url: search_html, telegraph_url: telegraph_html})
+    results = client.search_quark_resources("蝉", required_title="蝉")
+    assert results[0]["url"] == "https://pan.quark.cn/s/QkSingle"
+
+
 if __name__ == "__main__":
     test_direct_and_telegraph_115_links_are_extracted()
     test_mixed_cloud_links_only_keep_115()
     test_parser_keeps_multiple_messages_with_void_tags()
     test_title_filter_runs_before_result_limit()
+    test_quark_links_are_extracted_and_password_in_text()
+    test_quark_url_with_query_password()
+    test_telegraph_quark_link_and_access_code_are_extracted()
+    test_single_character_title_can_follow_telegraph()
     print("telegram_web parser tests: OK")

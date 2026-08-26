@@ -18,7 +18,7 @@ from app.schemas import MediaInfo
 from app.schemas.types import MediaType, NotificationType
 from app.utils.string import StringUtils
 
-from ..utils import FileMatcher, SubscribeFilter
+from ..utils import FileMatcher, SubscribeFilter, resource_year_matches, sanitize_resource_text
 from .search import SearchHandler
 from .subscribe import SubscribeHandler
 
@@ -105,8 +105,8 @@ class SyncHandler:
         if len(expected) >= 2 and expected in actual:
             return True
 
-        # 单字剧名（如“蝉”）经过 \W 清理时会被 Python 正则当作非单词字符移除，
-        # 因而不能使用 compact 后的包含判断；改为在 NFKC 标准化原文中做字面匹配。
+        # 单字剧名不参与 compact 后“至少两字符”的快速路径，
+        # 改在 NFKC 标准化原文中做字面匹配。
         normalized_title = unicodedata.normalize("NFKC", title).casefold()
         normalized_text = unicodedata.normalize("NFKC", text).casefold()
         return len(normalized_title) == 1 and normalized_title in normalized_text
@@ -206,12 +206,16 @@ class SyncHandler:
 
                 share_url = resource.get("url", "")
                 resource_title = resource.get("title", "")
+                safe_resource_title = sanitize_resource_text(resource_title)
 
                 if not self._resource_title_matches(mediainfo, resource_title):
-                    logger.info(f"跳过标题未明确匹配当前订阅的 Telegram 候选：{resource_title[:120]}")
+                    logger.info(f"跳过标题未明确匹配当前订阅的 Telegram 候选：{safe_resource_title}")
+                    continue
+                if not resource_year_matches(mediainfo.year, resource_title, title=mediainfo.title):
+                    logger.info(f"跳过年份与订阅不匹配的 Telegram 候选：{safe_resource_title}")
                     continue
 
-                logger.info(f"检查 115 分享：{resource_title[:120]}")
+                logger.info(f"检查 115 分享：{safe_resource_title}")
 
                 try:
                     # 先检查分享链接是否有效
@@ -265,9 +269,10 @@ class SyncHandler:
                         history_item = {
                             "title": mediainfo.title,
                             "year": mediainfo.year,
+                            "tmdb_id": mediainfo.tmdb_id,
                             "type": "电影",
                             "status": "成功" if success else "失败",
-                            "share_url": share_url,
+                            "share_code": str(self._p115_manager.extract_share_info(share_url).get("share_code") or ""),
                             "file_name": file_name,
                             "filter_score": current_score,
                             "perfect_match": is_perfect,
@@ -305,12 +310,15 @@ class SyncHandler:
                                     image=mediainfo.get_poster_image(),
                                     downloader="115网盘",
                                     download_hash=matched_file.get("id"),
-                                    torrent_name=resource_title,
+                                    torrent_name=safe_resource_title,
                                     torrent_description=file_name,
                                     torrent_site="115网盘",
                                     username="P115TGSub",
                                     date=datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                                    note={"source": f"Subscribe|{subscribe.name}", "share_url": share_url}
+                                    note={
+                                        "source": f"Subscribe|{subscribe.name}",
+                                        "share_code": str(self._p115_manager.extract_share_info(share_url).get("share_code") or ""),
+                                    }
                                 )
                                 logger.debug(f"已记录电影 {mediainfo.title} 下载历史")
                             except Exception as e:
@@ -403,6 +411,9 @@ class SyncHandler:
 
             if exist_flag:
                 logger.info(f"{mediainfo.title_year} S{meta.begin_season} 媒体库中已完整存在")
+                if self._dry_run:
+                    logger.info("测试模式：不修改订阅完成状态")
+                    return transferred_count
                 # 媒体库已完整，调用完成订阅逻辑
                 total_ep = subscribe.total_episode or 0
                 start_ep = subscribe.start_episode or 1
@@ -509,7 +520,7 @@ class SyncHandler:
             if not missing_episodes:
                 logger.info(f"{mediainfo.title_year} S{season} 所有缺失剧集已存在于网盘")
                 # 网盘中已存在所有缺失集数，更新订阅状态
-                if existing_episodes_in_cloud:
+                if existing_episodes_in_cloud and not self._dry_run:
                     self._subscribe_handler.check_and_finish_subscribe(
                         subscribe=subscribe,
                         mediainfo=mediainfo,
@@ -610,12 +621,16 @@ class SyncHandler:
 
                     share_url = resource.get("url", "")
                     resource_title = resource.get("title", "")
+                    safe_resource_title = sanitize_resource_text(resource_title)
 
                     if not self._resource_title_matches(mediainfo, resource_title):
-                        logger.info(f"跳过标题未明确匹配当前订阅的 Telegram 候选：{resource_title[:120]}")
+                        logger.info(f"跳过标题未明确匹配当前订阅的 Telegram 候选：{safe_resource_title}")
+                        continue
+                    if not resource_year_matches(mediainfo.year, resource_title, title=mediainfo.title):
+                        logger.info(f"跳过年份与订阅不匹配的 Telegram 候选：{safe_resource_title}")
                         continue
 
-                    logger.info(f"检查 115 分享：{resource_title[:120]}")
+                    logger.info(f"检查 115 分享：{safe_resource_title}")
 
                     try:
                         # 检查分享链接是否有效
@@ -713,11 +728,13 @@ class SyncHandler:
 
                             history_item = {
                                 "title": mediainfo.title,
+                                "year": mediainfo.year,
+                                "tmdb_id": mediainfo.tmdb_id,
                                 "season": season,
                                 "episode": episode,
                                 "type": "电视剧",
                                 "status": "成功" if success else "失败",
-                                "share_url": share_url,
+                                "share_code": str(self._p115_manager.extract_share_info(share_url).get("share_code") or ""),
                                 "file_name": file_name,
                                 "filter_score": current_score,
                                 "perfect_match": is_perfect,
@@ -778,12 +795,15 @@ class SyncHandler:
                                     episodes=episodes_str,
                                     image=mediainfo.get_poster_image(),
                                     downloader="115网盘",
-                                    download_hash=share_url,
-                                    torrent_name=resource_title,
+                                    download_hash=str(self._p115_manager.extract_share_info(share_url).get("share_code") or ""),
+                                    torrent_name=safe_resource_title,
                                     torrent_site="115网盘",
                                     username="P115TGSub",
                                     date=datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                                    note={"source": f"Subscribe|{subscribe.name}", "share_url": share_url}
+                                    note={
+                                        "source": f"Subscribe|{subscribe.name}",
+                                        "share_code": str(self._p115_manager.extract_share_info(share_url).get("share_code") or ""),
+                                    }
                                 )
                                 logger.debug(f"已记录 {mediainfo.title} S{season:02d} {episodes_str} 下载历史")
                             except Exception as e:
@@ -807,7 +827,7 @@ class SyncHandler:
             # 更新订阅状态
             # 将网盘已存在的集数和本次成功转存的集数合并
             all_success_episodes = list(set(success_episodes) | existing_episodes_in_cloud)
-            if all_success_episodes:
+            if all_success_episodes and not self._dry_run:
                 self._subscribe_handler.check_and_finish_subscribe(
                     subscribe=subscribe,
                     mediainfo=mediainfo,

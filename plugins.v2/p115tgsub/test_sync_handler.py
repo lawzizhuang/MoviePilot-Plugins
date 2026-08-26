@@ -50,6 +50,8 @@ sys.modules[package_name] = package
 utils = types.ModuleType(f"{package_name}.utils")
 utils.FileMatcher = type("FileMatcher", (), {})
 utils.SubscribeFilter = type("SubscribeFilter", (), {})
+utils.resource_year_matches = lambda expected, *values: True
+utils.sanitize_resource_text = lambda value, limit=160: str(value or "")[:limit]
 sys.modules[utils.__name__] = utils
 handlers = types.ModuleType(f"{package_name}.handlers")
 handlers.__path__ = []
@@ -95,9 +97,31 @@ def test_zero_start_episode_falls_back_to_episode_one():
     assert SyncHandler._fallback_missing_episodes_from_subscribe(subscribe_obj) == list(range(1, 22))
 
 
+def test_history_sensitive_url_migration_helper_contract():
+    # 主类发布审查保证旧历史中的 URL 可被移除；同步处理器新增记录已改用 share_code。
+    source = (Path(__file__).parent / "handlers" / "sync.py").read_text(encoding="utf8")
+    assert '"share_url": share_url' not in source
+    assert 'note={"source": f"Subscribe|{subscribe.name}", "share_url": share_url}' not in source
+
+
+def test_explicit_wrong_year_is_rejected_by_helper_contract():
+    path = Path(__file__).parent / "utils" / "resource_match.py"
+    spec = importlib.util.spec_from_file_location("resource_match", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert module.resource_year_matches(2026, "测试影片 (2026)", title="测试影片")
+    assert not module.resource_year_matches(2026, "测试影片 (2025)", title="测试影片")
+    assert module.resource_year_matches(2026, "测试影片.2026.1080p", title="测试影片")
+    assert not module.resource_year_matches(2026, "测试影片.2025.1080p", title="测试影片")
+    # 正文发布日期不是资源年份，不能误伤合法候选。
+    assert module.resource_year_matches(2026, "测试影片 更新于 2025-08-01", title="测试影片")
+
+
 if __name__ == "__main__":
     test_single_character_title_is_not_removed_by_normalization()
     test_unrelated_single_character_title_is_rejected()
     test_multi_character_title_remains_matched_after_normalization()
     test_zero_start_episode_falls_back_to_episode_one()
+    test_history_sensitive_url_migration_helper_contract()
+    test_explicit_wrong_year_is_rejected_by_helper_contract()
     print("sync handler tests: OK")

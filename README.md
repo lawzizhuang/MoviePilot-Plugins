@@ -7,7 +7,7 @@
 | 插件 | ID | 目录 | 定位 |
 |---|---|---|---|
 | 115网盘订阅追更（本地适配） | `P115StrgmSubLocal` | `plugins.v2/p115strgmsublocal/` | 原追更插件的本地适配版；支持 PanSou、Nullbr、HDHive 搜索源。 |
-| 115 TG订阅追更 | `P115TGSub` | `plugins.v2/p115tgsub/` | 直接检索指定 Telegram 公开频道中的 115 分享资源；不依赖 CloudSaver。 |
+| 115 TG订阅追更 | `P115TGSub` | `plugins.v2/p115tgsub/` | 直接检索指定 Telegram 公开频道中的 115/夸克分享资源；夸克链路兜底转存并联动 SmartStrm；不依赖 CloudSaver。 |
 
 > 两个插件均读取 MoviePilot 的订阅信息、检查电影或剧集缺失内容，并将通过校验的 115 分享资源转存到指定目录。请按自身资源来源选择其一进行测试，避免两个插件同时处理同一批订阅。
 
@@ -61,20 +61,22 @@ p115client==0.0.9.6.5.1
 ```text
 插件 ID：P115TGSub
 目录：plugins.v2/p115tgsub/
-版本：1.0.0
+版本：2.0.0
 ```
 
 面向“资源直接发布在 Telegram 公开频道”的订阅追更场景。插件自行访问 Telegram 公开搜索页，不调用 CloudSaver API，也不保存 CloudSaver 的地址、JWT 或账号密码。
 
-### v1.0 支持范围
+### v2.0 支持范围
 
 ```text
-MoviePilot 指定订阅
+MoviePilot 订阅
 → Telegram 公开频道搜索页
-→ 提取 115 分享链接
-→ 读取 115 分享目录，核对影片/季集/缺集
-→ 转存至 115
+→ 提取 115 与夸克（pan.quark.cn）分享链接
+→ 校验分享目录，核对影片/季集/缺集
+→ 115 优先转存；无 115 候选时转存夸克（复用 QuarkDisk Cookie）
+→ 目标目录二次确认
 → 更新 MoviePilot 订阅状态
+→ 夸克转存成功联动 SmartStrm 增量生成 STRM
 ```
 
 已适配的资源形态：
@@ -84,8 +86,9 @@ MoviePilot 指定订阅
 | `QukanMovie` | 115 链接直接位于 Telegram 消息内 | 直接提取消息正文和链接按钮中的 115 分享链接。 |
 | `lsp115` | Telegram 消息通过“查看资源”跳转至 `telegra.ph` | 仅在消息标题匹配且没有直接 115 链接时，限额访问 Telegraph 页面并提取 115 链接。 |
 | `vip115hot` | 混合发布多种网盘链接 | 仅保留 115 域名链接，其他网盘链接自动跳过。 |
+| 夸克资源频道 | 消息内或 Telegraph 页含 `pan.quark.cn` 链接 | 与 115 使用同一套消息解析与标题初筛；仅当 115 无可用候选时进入夸克链路。 |
 
-仅接受下列域名的分享链接：
+夸克链路仅接受 `pan.quark.cn` 域名分享链接。115 链路仅接受下列域名的分享链接：
 
 ```text
 115.com
@@ -96,17 +99,18 @@ anxia.com
 *.anxia.com
 ```
 
-### v1.0 明确不支持
+### v2.0 明确不支持
 
 - CloudSaver API、CloudSaver JWT 或其他 CloudSaver 运行依赖；
-- 夸克及其他非 115 网盘；
 - Telegram 私有频道、邀请链接、私有群组；
 - Telegram 用户账号登录、Telethon、Pyrogram；
-- 未经分享目录和缺集匹配校验的盲目转存。
+- 未经分享目录和缺集匹配校验的盲目转存；
+- 通过 MoviePilot 向夸克远端写入 NFO、海报或图片（夸克远端仅存媒体文件）；
+- 同一集同时转存到 115 与夸克（115 优先，历史记录去重）。
 
 ### 首次配置建议
 
-1. 配置独立的 115 测试目录与有效 115 Cookie；
+1. 配置独立的 115 测试目录与有效 115 Cookie；夸克链路先安装并启用「夸克网盘存储（QuarkDisk）」；
 2. 在插件中填写公开频道，每行一个，例如：
 
    ```text
@@ -115,27 +119,30 @@ anxia.com
    vip115hot
    ```
 
-3. 仅勾选一部 MoviePilot 测试订阅；
+3. 配置夸克电影/电视剧转存目录，以及 SmartStrm Webhook 地址与任务名；
 4. 保持默认的「测试模式（只验证，不转存）」开启；
 5. 手动运行一次，确认日志中依次出现：
 
    ```text
    Telegram 搜索
-   → 115 分享校验
+   → 115 分享校验 / 夸克分享校验
    → 分享目录文件匹配
    ```
 
-6. 确认候选、季集和目标目录均正确后，再关闭测试模式进行实际转存。
+6. 用详情页「验证夸克连通性」「测试 SmartStrm」做只读验证；确认候选、季集和目标目录均正确后，再关闭测试模式进行实际转存。
 
 ### 默认安全控制
 
-- 仅处理配置页中明确勾选的订阅；
-- 默认测试模式，不转存、不修改订阅；
+- 自动处理全部 MoviePilot 待处理订阅（状态 N、R）；
+- 默认测试模式，不转存、不修改订阅、不触发 SmartStrm；
 - Telegram 消息文本必须包含订阅标题；
+- 115 优先、夸克兜底，同一集不双盘重复转存；
+- 夸克转存成功以目标目录二次确认为准；
+- 夸克风控词触发冷却熔断，仅网络瞬态异常重试；
 - Telegraph 二跳仅在需要时发生，并限制每频道请求数量；
 - 限制每频道检查消息数、每轮转存文件数、转存批次大小；
 - 调度周期最短为 8 小时；
-- 不在常规日志和通知中输出 115 Cookie、访问密码或完整分享链接。
+- 不在常规日志和通知中输出 115/夸克 Cookie、Webhook 完整地址、访问密码或完整分享链接。
 
 ## 安装
 
@@ -173,13 +180,20 @@ MoviePilot V2 读取 `package.v2.json` 与 `plugins.v2/` 目录；自定义仓�
 ```bash
 python -m compileall -q plugins.v2/p115tgsub
 python plugins.v2/p115tgsub/test_telegram_web.py
+python plugins.v2/p115tgsub/test_sync_handler.py
+python plugins.v2/p115tgsub/test_quark_client.py
+python plugins.v2/p115tgsub/test_smartstrm_client.py
+python plugins.v2/p115tgsub/test_strm_queue.py
+python plugins.v2/p115tgsub/test_quark_sync_handler.py
 git diff --check
 ```
 
-`test_telegram_web.py` 覆盖：
+测试覆盖：
 
-- Telegram 消息内直接 115 链接；
-- Telegraph 二跳页的 115 链接；
-- 混合网盘消息只保留 115 链接。
+- Telegram 消息内直接 115/夸克链接、Telegraph 二跳、混合网盘链接过滤、标题初筛先于上限；
+- 115 标题匹配与订阅集数回退；
+- 夸克分享解析、目录读取、指定文件保存、风控熔断、二次确认；
+- SmartStrm Webhook 契约（GET 校验 / POST 增量触发）与待重试队列单次触发/停滞；
+- 夸克链路全流程：115 已转存集跳过、测试模式不转存、二次确认失败不更新订阅。
 
 > 静态测试不替代真实环境验收。实际转存前必须使用测试订阅、测试目录和测试模式完成端到端核验。

@@ -9,7 +9,6 @@ from app.core.metainfo import MetaInfo
 from app.chain.subscribe import SubscribeChain
 from app.db import SessionFactory
 from app.db.subscribe_oper import SubscribeOper
-from app.db.models.site import Site
 from app.log import logger
 from app.schemas import MediaInfo
 from app.schemas.types import MediaType, NotificationType
@@ -80,6 +79,10 @@ class SubscribeHandler:
 
             if update_data:
                 SubscribeOper().update(subscribe.id, update_data)
+                if "note" in update_data:
+                    subscribe.note = new_note
+                if "lack_episode" in update_data:
+                    subscribe.lack_episode = new_lack
 
             if new_lack == 0:
                 logger.info(f"订阅 {subscribe.name} 已完成，准备移至历史记录")
