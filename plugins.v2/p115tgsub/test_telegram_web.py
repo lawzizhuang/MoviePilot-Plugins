@@ -163,6 +163,22 @@ def test_quark_url_with_query_password():
     assert client._extract_urls("https://pan.quark.cn/s/Qk654321?pwd=cd34", []) == []
 
 
+def test_quark_duplicate_keeps_access_code_variants_and_counts_merge():
+    search_url_a = "https://t.me/s/Aaaaa?q=%E4%B8%89%E4%BD%93"
+    search_url_b = "https://t.me/s/Bbbbb?q=%E4%B8%89%E4%BD%93"
+    html_a = '''<div class="tgme_widget_message" data-post="Aaaaa/1">
+      <div class="tgme_widget_message_text">三体 提取码：aB12 <a href="https://pan.quark.cn/s/Same123">链接</a></div></div>'''
+    html_b = '''<div class="tgme_widget_message" data-post="Bbbbb/1">
+      <div class="tgme_widget_message_text">三体 提取码：aB12 <a href="https://pan.quark.cn/s/Same123">链接</a></div></div>
+      <div class="tgme_widget_message" data-post="Bbbbb/2">
+      <div class="tgme_widget_message_text">三体 提取码：cD34 <a href="https://pan.quark.cn/s/Same123">链接</a></div></div>'''
+    client = TelegramWebClient(["Aaaaa", "Bbbbb"])
+    client._session = _Session({search_url_a: html_a, search_url_b: html_b})
+    results = client.search_quark_resources("三体", required_title="三体")
+    assert len(results) == 2
+    assert client.get_search_stats() == {"raw_candidates": 3, "duplicates_merged": 1}
+
+
 def test_telegraph_quark_link_and_access_code_are_extracted():
     search_url = "https://t.me/s/QukanMovie?q=%E4%B8%89%E4%BD%93"
     telegraph_url = "https://telegra.ph/quark-resource"
@@ -209,6 +225,7 @@ if __name__ == "__main__":
     test_title_filter_runs_before_result_limit()
     test_quark_links_are_extracted_and_password_in_text()
     test_quark_url_with_query_password()
+    test_quark_duplicate_keeps_access_code_variants_and_counts_merge()
     test_telegraph_quark_link_and_access_code_are_extracted()
     test_single_character_title_can_follow_telegraph()
     print("telegram_web parser tests: OK")

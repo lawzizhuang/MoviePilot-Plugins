@@ -8,7 +8,7 @@ import unicodedata
 from dataclasses import dataclass, field
 from html.parser import HTMLParser
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
-from urllib.parse import quote, unquote, urlsplit
+from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 import requests
 
@@ -151,6 +151,7 @@ class TelegramWebClient:
         self.telegraph_delay = max(0.0, min(float(telegraph_delay or 0), 5.0))
         self._api_call_count = 0
         self._page_cache: Dict[str, str] = {}
+        self._search_stats = {"raw_candidates": 0, "duplicates_merged": 0}
         self._proxies = proxy if isinstance(proxy, dict) else ({"http": proxy, "https": proxy} if proxy else None)
         self._session = requests.Session()
         self._session.headers.update({"User-Agent": self.USER_AGENT, "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8"})
@@ -256,6 +257,11 @@ class TelegramWebClient:
     def reset_api_call_count(self) -> None:
         self._api_call_count = 0
         self._page_cache.clear()
+        self._search_stats = {"raw_candidates": 0, "duplicates_merged": 0}
+
+    def get_search_stats(self) -> Dict[str, int]:
+        """返回本同步轮 Telegram 候选统计，不含链接或提取码。"""
+        return dict(self._search_stats)
 
     def _get(self, url: str) -> Optional[str]:
         cached = self._page_cache.get(url)
@@ -372,6 +378,28 @@ class TelegramWebClient:
         actual = re.sub(r"[\W_]+", "", str(message.text or "").casefold())
         return bool(expected) and expected in actual
 
+    @classmethod
+    def _quark_share_key(cls, url: str, text: str = "") -> Tuple[str, str]:
+        """生成运行期去重键；同分享保留不同访问码，优先保留带访问码版本。"""
+        cleaned = cls._clean_url(url)
+        match = re.search(r"pan\.quark\.cn/s/([A-Za-z0-9]+)", cleaned, re.IGNORECASE)
+        if not match:
+            return cleaned.casefold(), ""
+        query = urlsplit(cleaned).query
+        password = ""
+        for key in ("pwd", "passcode", "code"):
+            values = parse_qs(query).get(key) or []
+            if values and str(values[0]).strip():
+                password = str(values[0]).strip()
+                break
+        if not password:
+            password_match = re.search(
+                r"(?:提取码|访问码|密码|passcode|code)\s*[：:=]?\s*([A-Za-z0-9]{4,16})",
+                str(text or ""), re.IGNORECASE,
+            )
+            password = password_match.group(1) if password_match else ""
+        return match.group(1).casefold(), password.casefold()
+
     def search_115_resources(self, keyword: str, required_title: str = "") -> List[Dict[str, str]]:
         """搜索所有已配置频道，返回标题已初筛的 115 资源格式。"""
         return self._search_links(keyword, required_title, "115")
@@ -388,7 +416,9 @@ class TelegramWebClient:
 
         extractor = self._extract_urls if kind == "115" else self._extract_quark_urls
         results: List[Dict[str, str]] = []
-        seen_share_urls = set()
+        # 115 仍按完整链接去重；夸克按“分享 ID + 访问码”去重，避免无访问码
+        # 的搬运消息覆盖后续携带正确访问码的同一分享。
+        seen_keys = set()
         for channel in self.channels:
             messages = self.search_messages(channel, keyword, required_title=required_title)
             if not messages:
@@ -420,9 +450,16 @@ class TelegramWebClient:
 
                 for share_url in direct_links:
                     normalized_url = self._clean_url(share_url)
-                    if normalized_url.lower() in seen_share_urls:
+                    candidate_text = link_texts.get(normalized_url.lower(), message.text or "")
+                    if kind == "quark":
+                        dedup_key = self._quark_share_key(normalized_url, candidate_text)
+                    else:
+                        dedup_key = (normalized_url.casefold(), "")
+                    self._search_stats["raw_candidates"] += 1
+                    if dedup_key in seen_keys:
+                        self._search_stats["duplicates_merged"] += 1
                         continue
-                    seen_share_urls.add(normalized_url.lower())
+                    seen_keys.add(dedup_key)
                     results.append({
                         "url": normalized_url,
                         "title": message.text or keyword,
@@ -430,7 +467,7 @@ class TelegramWebClient:
                         "channel": message.channel,
                         "message_id": message.message_id,
                         "message_url": message.message_url,
-                        "text": link_texts.get(normalized_url.lower(), message.text or ""),
+                        "text": candidate_text,
                     })
 
         logger.info(f"Telegram 公开频道搜索“{keyword}”完成，找到 {len(results)} 个 {kind} 分享链接")

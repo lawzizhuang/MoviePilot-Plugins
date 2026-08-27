@@ -17,18 +17,38 @@ import requests
 from app.log import logger
 
 
+class QuarkShareAccessError(RuntimeError):
+    """夸克分享访问失败；仅携带脱敏分类，不保留响应原文。"""
+
+    def __init__(self, category: str) -> None:
+        self.category = category
+        super().__init__(category)
+
+
 @dataclass
 class QuarkShareLinkStatus:
     """夸克分享链接的最小状态描述。"""
 
     is_valid: bool = False
     error_message: str = ""
+    error_category: str = ""
     file_count: int = 0
     share_info: Dict[str, Any] = field(default_factory=dict)
 
     @property
     def status_text(self) -> str:
-        return "有效" if self.is_valid else (self.error_message or "未知状态")
+        if self.is_valid:
+            return "有效"
+        messages = {
+            "invalid_link": "分享链接格式无效",
+            "share_expired": "分享已失效或不存在",
+            "password_invalid": "访问码缺失或错误",
+            "access_denied": "分享访问受限",
+            "risk_limited": "账号或分享访问受限",
+            "network_error": "网络请求失败",
+            "api_error": "夸克接口异常",
+        }
+        return messages.get(self.error_category, self.error_message or "未知状态")
 
 
 class _RateLimiter:
@@ -229,6 +249,25 @@ class QuarkShareClient:
         # 密码不进入日志；进程内缓存键不持久化。
         return f"{info.get('share_id', '')}\0{info.get('password', '')}"
 
+    @classmethod
+    def _classify_share_error(cls, result: Dict[str, Any]) -> str:
+        """将夸克响应归为可观测的脱敏类别，绝不向日志透传服务端原文。"""
+        status = str(result.get("status") or "")
+        code = str(result.get("code") or "")
+        message = str(result.get("message") or result.get("msg") or "").casefold()
+        text = f"{status} {code} {message}"
+        if status == "-1" or code == "-1":
+            return "network_error"
+        if any(marker in text for marker in cls._RISK_MARKERS):
+            return "risk_limited"
+        if any(marker in text for marker in ("提取码", "访问码", "密码", "passcode", "password", "pwd")):
+            return "password_invalid"
+        if any(marker in text for marker in ("不存在", "已失效", "已取消", "已删除", "过期", "not found", "expired")):
+            return "share_expired"
+        if any(marker in text for marker in ("无权限", "权限", "拒绝", "access denied", "forbidden", "unauthorized")):
+            return "access_denied"
+        return "api_error"
+
     def _get_share_token(self, info: Dict[str, str]) -> str:
         cache_key = self._share_cache_key(info)
         now = time.monotonic()
@@ -246,7 +285,7 @@ class QuarkShareClient:
         )
         token = str((self._data(result) or {}).get("stoken") or "")
         if not self._is_success(result) or not token:
-            raise RuntimeError("获取夸克分享访问令牌失败")
+            raise QuarkShareAccessError(self._classify_share_error(result))
         with self._cache_lock:
             self._share_tokens[cache_key] = (token, now + 600)
         return token
@@ -324,20 +363,22 @@ class QuarkShareClient:
         status = QuarkShareLinkStatus()
         info = self.extract_share_info(share_url, password)
         if not info:
-            status.error_message = "无效的夸克分享链接格式"
+            status.error_category = "invalid_link"
             return status
         try:
             stoken = self._get_share_token(info)
             result = self._get_share_page(info["share_id"], stoken, size=1)
             if not self._is_success(result):
-                status.error_message = "夸克分享不可用或访问码错误"
+                status.error_category = self._classify_share_error(result)
                 return status
             data = self._data(result)
             status.is_valid = True
             status.file_count = self._response_total(result) or 0
             status.share_info = {"share_title": str(data.get("title") or "") if isinstance(data, dict) else ""}
-        except Exception as exc:
-            status.error_message = str(exc) or type(exc).__name__
+        except QuarkShareAccessError as exc:
+            status.error_category = exc.category
+        except Exception:
+            status.error_category = "api_error"
         return status
 
     @staticmethod

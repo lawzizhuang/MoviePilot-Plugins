@@ -29,7 +29,7 @@ class P115TGSub(_PluginBase):
     plugin_name = "115 TG订阅追更"
     plugin_desc = "读取 MoviePilot 订阅，直接搜索 Telegram 公开频道中的 115/夸克分享资源并补齐缺失内容。"
     plugin_icon = "https://raw.githubusercontent.com/jxxghp/MoviePilot-Plugins/main/icons/cloud.png"
-    plugin_version = "2.0.1"
+    plugin_version = "2.1.1"
     plugin_author = "lawzizhuang"
     author_url = "https://github.com/lawzizhuang/MoviePilot-Plugins"
     plugin_config_prefix = "p115tgsub_"
@@ -66,6 +66,7 @@ class P115TGSub(_PluginBase):
     _strm_client = None
     _sync_running = False
     _run_requested = False
+    _run_status: Dict[str, Any] = {}
 
     _scheduler: Optional[BackgroundScheduler] = None
     _telegram_client: Optional[TelegramWebClient] = None
@@ -289,7 +290,59 @@ class P115TGSub(_PluginBase):
             strm_task=self._smartstrm_task,
             strm_xlist_path_fix=self._smartstrm_xlist_path_fix,
             strm_max_attempts=self._strm_retry_max,
+            status_callback=self._record_quark_status,
         )
+
+    @staticmethod
+    def _now() -> str:
+        return datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    def _start_run_status(self, subscribe_count: int = 0) -> None:
+        if self._run_status:
+            self._run_status["subscribe_count"] = subscribe_count
+            return
+        self._run_status = {
+            "started_at": self._now(), "finished_at": "", "result": "运行中",
+            "subscribe_count": subscribe_count, "transferred_115": 0, "transferred_quark": 0,
+            "telegram_raw_candidates": 0, "telegram_duplicates_merged": 0,
+            "quark_candidates": 0, "quark_failures": {}, "strm": {"triggered": 0, "failed": 0, "stalled": 0},
+            "media": {}, "last_error": "",
+        }
+
+    def _record_quark_status(self, event: str, **data: Any) -> None:
+        """记录当前同步轮的脱敏夸克/SmartStrm 状态。"""
+        if not self._run_status:
+            return
+        if event == "quark_candidates":
+            self._run_status["quark_candidates"] += int(data.get("count") or 0)
+        elif event == "quark_failure":
+            category = str(data.get("category") or "api_error")
+            failures = self._run_status["quark_failures"]
+            failures[category] = int(failures.get(category) or 0) + 1
+        elif event == "quark_transferred":
+            title = str(data.get("title") or "未知媒体")
+            season = data.get("season")
+            key = f"{title} S{int(season):02d}" if season else title
+            self._run_status["media"][key] = str(data.get("stage") or "夸克转存成功，已触发 SmartStrm")
+        elif event == "strm_trigger":
+            key = "triggered" if data.get("success") else "failed"
+            self._run_status["strm"][key] += 1
+        elif event == "strm_retry":
+            for key in ("triggered", "failed", "stalled"):
+                self._run_status["strm"][key] += int(data.get(key) or 0)
+
+    def _finish_run_status(self, *, result: str, transferred_115: int = 0, transferred_quark: int = 0, error: str = "") -> None:
+        if not self._run_status:
+            return
+        telegram_stats = self._telegram_client.get_search_stats() if self._telegram_client else {}
+        self._run_status.update({
+            "finished_at": self._now(), "result": result,
+            "transferred_115": transferred_115, "transferred_quark": transferred_quark,
+            "telegram_raw_candidates": int(telegram_stats.get("raw_candidates") or 0),
+            "telegram_duplicates_merged": int(telegram_stats.get("duplicates_merged") or 0),
+            "last_error": str(error or "")[:160],
+        })
+        self.save_data("run_status", self._run_status)
 
     def _config_snapshot(self) -> Dict[str, Any]:
         return {
@@ -325,8 +378,8 @@ class P115TGSub(_PluginBase):
         return UIConfig.get_form()
 
     def get_page(self) -> List[dict]:
-        """提供插件详情页操作入口与最近转存记录。"""
-        return UIConfig.get_page(self.get_data("history") or [])
+        """提供插件详情页操作入口、最近转存记录和运行概览。"""
+        return UIConfig.get_page(self.get_data("history") or [], self.get_data("run_status") or {})
 
     def get_api(self) -> List[Dict[str, Any]]:
         return [
@@ -392,6 +445,9 @@ class P115TGSub(_PluginBase):
         return output
 
     def _do_sync(self) -> bool:
+        self._start_run_status()
+        if self._quark_handler:
+            self._quark_handler.begin_run()
         # SmartStrm 队列独立于本轮搜索/网盘状态；测试模式不触发任何后处理。
         if self._quark_handler and not self._dry_run:
             try:
@@ -400,7 +456,8 @@ class P115TGSub(_PluginBase):
                 logger.warning(f"SmartStrm 待重试队列处理异常：{exc}")
 
         if not self._telegram_enabled or not self._telegram_client or not self._telegram_client.channels:
-            logger.error("Telegram 公开频道搜索未正确配置，无法执行")
+            logger.error("Telegram 公开频道搜索未正确配置，无法执行订阅追更")
+            self._finish_run_status(result="失败", error="Telegram 公开频道未配置")
             return False
         p115_ready = bool(self._p115_manager)
         if p115_ready:
@@ -421,15 +478,19 @@ class P115TGSub(_PluginBase):
                 quark_ready = False
         if not p115_ready and not quark_ready:
             logger.error("115 与夸克客户端均不可用，无法执行订阅追更")
+            self._finish_run_status(result="失败", error="115 与夸克客户端均不可用")
             return False
 
         with SessionFactory() as db:
             subscribes = SubscribeOper(db=db).list("N,R") or []
         if not subscribes:
             logger.warning("当前没有待处理的 MoviePilot 订阅")
+            self._start_run_status(0)
+            self._finish_run_status(result="完成")
             return True
 
         logger.info(f"开始处理 {len(subscribes)} 个 MoviePilot 待处理订阅")
+        self._start_run_status(len(subscribes))
 
         try:
             self._telegram_client.reset_api_call_count()
@@ -481,6 +542,10 @@ class P115TGSub(_PluginBase):
         self.save_data("history", history)
         logger.info(
             f"115 TG订阅追更完成：115 转存 {transferred_115} 个，夸克转存 {transferred_quark} 个"
+        )
+        self._finish_run_status(
+            result="完成" if transferred_total else "完成（未发现可转存资源）",
+            transferred_115=transferred_115, transferred_quark=transferred_quark,
         )
         if self._notify:
             if transferred_115:

@@ -185,16 +185,50 @@ class UIConfig:
         return form, defaults
 
     @staticmethod
-    def get_page(history: List[Dict[str, Any]]) -> List[dict]:
-        """插件详情页：提供无需保存配置的即时操作入口。"""
+    def get_page(history: List[Dict[str, Any]], run_status: Dict[str, Any] = None) -> List[dict]:
+        """插件详情页：提供即时操作入口与最近一轮脱敏运行概览。"""
         history = history or []
+        status = run_status or {}
+        failures = status.get("quark_failures") or {}
+        failure_names = {
+            "share_expired": "分享失效", "password_invalid": "访问码异常", "access_denied": "访问受限",
+            "risk_limited": "风控限制", "network_error": "网络异常", "api_error": "接口异常",
+            "empty_share": "空分享", "no_matching_episode": "无目标集", "suppressed_duplicate": "本轮重复抑制",
+        }
+        failure_text = "、".join(
+            f"{failure_names.get(key, key)} {value}" for key, value in failures.items() if value
+        ) or "无"
+        strm = status.get("strm") or {}
+        media = status.get("media") or {}
+        media_lines = [f"{title}：{stage}" for title, stage in list(media.items())[-5:]]
         recent_count = len(history)
+        overview = (
+            f"最近运行：{status.get('finished_at') or status.get('started_at') or '暂无'} · "
+            f"{status.get('result') or '暂无记录'}\n"
+            f"订阅 {status.get('subscribe_count', 0)} · 115 转存 {status.get('transferred_115', 0)} · "
+            f"夸克转存 {status.get('transferred_quark', 0)}\n"
+            f"Telegram 候选 {status.get('telegram_raw_candidates', 0)} · 合并重复 {status.get('telegram_duplicates_merged', 0)} · "
+            f"夸克候选 {status.get('quark_candidates', 0)}\n"
+            f"夸克跳过：{failure_text}\n"
+            f"SmartStrm 重试：成功 {strm.get('triggered', 0)} / 失败 {strm.get('failed', 0)} / 停滞 {strm.get('stalled', 0)}"
+        )
+        if media_lines:
+            overview += "\n最近媒体：" + "；".join(media_lines)
+        if status.get("last_error"):
+            overview += f"\n最近异常：{status['last_error']}"
         return [{
             "component": "VCard",
             "props": {"class": "mb-4"},
             "content": [{
                 "component": "VCardText",
                 "content": [
+                    {
+                        "component": "VAlert",
+                        "props": {
+                            "type": "info", "variant": "tonal",
+                            "text": overview,
+                        },
+                    },
                     {
                         "component": "VAlert",
                         "props": {

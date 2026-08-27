@@ -235,6 +235,13 @@ def test_http_error_body_cannot_become_success():
     assert not client._is_success(response)
 
 
+def test_share_failure_categories_are_safe_and_specific():
+    assert QuarkShareClient._classify_share_error({"status": -1, "code": -1}) == "network_error"
+    assert QuarkShareClient._classify_share_error({"status": 403, "message": "提取码错误"}) == "password_invalid"
+    assert QuarkShareClient._classify_share_error({"status": 404, "message": "分享不存在"}) == "share_expired"
+    assert QuarkShareClient._classify_share_error({"status": 429, "message": "请求频繁"}) == "risk_limited"
+
+
 if __name__ == "__main__":
     test_extract_share_info()
     test_read_and_save_selected_file()
@@ -247,4 +254,5 @@ if __name__ == "__main__":
     test_metadata_total_drives_pagination()
     test_http_error_response_is_never_success()
     test_http_error_body_cannot_become_success()
+    test_share_failure_categories_are_safe_and_specific()
     print("quark share client tests: OK")

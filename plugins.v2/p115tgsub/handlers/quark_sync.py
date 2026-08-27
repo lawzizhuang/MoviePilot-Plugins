@@ -53,6 +53,7 @@ class QuarkSyncHandler:
         strm_task: str = "",
         strm_xlist_path_fix: str = "",
         strm_max_attempts: int = 5,
+        status_callback: Callable[..., None] = None,
     ) -> None:
         self._quark_client = quark_client
         self._search_handler = search_handler
@@ -74,6 +75,21 @@ class QuarkSyncHandler:
             save_data_func=save_data_func,
             max_attempts=strm_max_attempts,
         )
+        self._status_callback = status_callback
+        self._failed_candidate_keys: Set[Tuple[str, str, str, str]] = set()
+
+    def begin_run(self) -> None:
+        """开始新的同步轮次；失败候选只在本轮抑制，不跨轮持久化。"""
+        self._failed_candidate_keys.clear()
+
+    def _record_status(self, event: str, **data: Any) -> None:
+        """上报本轮脱敏运行状态；状态页不保存分享链接、访问码或凭据。"""
+        if not self._status_callback:
+            return
+        try:
+            self._status_callback(event, **data)
+        except Exception:
+            pass
 
     # ---------------- SmartStrm 后处理 ----------------
 
@@ -82,6 +98,7 @@ class QuarkSyncHandler:
         if not self._strm_enabled or not self._strm_client:
             return {"triggered": 0, "failed": 0, "stalled": 0}
         result = self._strm_queue.process_queue(self._strm_client)
+        self._record_status("strm_retry", **result)
         if result.get("triggered") or result.get("failed") or result.get("stalled"):
             logger.info(
                 f"SmartStrm 待重试队列处理：触发 {result.get('triggered')}，"
@@ -108,8 +125,9 @@ class QuarkSyncHandler:
         )
         if not item_id:
             return False
-        self._strm_queue.trigger_one(item_id, self._strm_client)
-        return True
+        outcome = self._strm_queue.trigger_one(item_id, self._strm_client)
+        self._record_status("strm_trigger", success=bool(outcome.get("success")))
+        return bool(outcome.get("success"))
 
     # ---------------- 标题与凭据辅助 ----------------
 
@@ -146,6 +164,22 @@ class QuarkSyncHandler:
     def _candidate_share_id(candidate: Dict[str, Any]) -> str:
         info = QuarkShareClient.extract_share_info(str(candidate.get("url") or ""), "")
         return info.get("share_id") or ""
+
+    def _candidate_key(self, candidate: Dict[str, Any], title: str = "", season: Optional[int] = None) -> Tuple[str, str, str, str]:
+        """失败抑制仅作用于同一媒体/季，避免合集分享误伤其他订阅。"""
+        return (
+            self._candidate_share_id(candidate), self._candidate_password(candidate),
+            str(title or "").casefold(), str(season or ""),
+        )
+
+    def _should_skip_failed_candidate(self, candidate: Dict[str, Any], title: str = "", season: Optional[int] = None) -> bool:
+        key = self._candidate_key(candidate, title, season)
+        return bool(key[0] and key in self._failed_candidate_keys)
+
+    def _mark_candidate_failed(self, candidate: Dict[str, Any], title: str = "", season: Optional[int] = None) -> None:
+        key = self._candidate_key(candidate, title, season)
+        if key[0]:
+            self._failed_candidate_keys.add(key)
 
     @staticmethod
     def _fallback_missing_episodes_from_subscribe(subscribe) -> List[int]:
@@ -270,6 +304,7 @@ class QuarkSyncHandler:
                 logger.info(f"未找到电影 {mediainfo.title} 的夸克网盘资源")
                 return transferred_count
             logger.info(f"找到 {len(quark_results)} 个夸克网盘资源")
+            self._record_status("quark_candidates", count=len(quark_results), title=mediainfo.title, media_type="电影")
 
             subscribe_filter = SubscribeFilter(
                 quality=subscribe.quality, resolution=subscribe.resolution,
@@ -278,6 +313,10 @@ class QuarkSyncHandler:
             save_dir = f"{self._movie_save_path}/{mediainfo.title} ({mediainfo.year})" if mediainfo.year else f"{self._movie_save_path}/{mediainfo.title}"
 
             for resource in quark_results:
+                if self._should_skip_failed_candidate(resource, mediainfo.title):
+                    self._record_status("quark_failure", category="suppressed_duplicate", title=mediainfo.title)
+                    logger.info("夸克候选本轮已确认不可用，跳过重复校验")
+                    continue
                 share_url = resource.get("url", "")
                 resource_title = resource.get("title", "")
                 safe_resource_title = sanitize_resource_text(resource_title)
@@ -289,7 +328,9 @@ class QuarkSyncHandler:
                     password = self._candidate_password(resource)
                     status = self._quark_client.check_share_status(share_url, password=password)
                     if not status.is_valid:
-                        logger.warning(f"夸克分享链接无效：{status.status_text}")
+                        self._mark_candidate_failed(resource, mediainfo.title)
+                        self._record_status("quark_failure", category=getattr(status, "error_category", "") or "api_error", title=mediainfo.title)
+                        logger.warning(f"夸克候选跳过：{status.status_text}")
                         continue
                     if not resource_year_matches(
                         mediainfo.year,
@@ -301,12 +342,16 @@ class QuarkSyncHandler:
                         continue
                     share_files = self._quark_client.list_share_files(share_url, password=password)
                     if not share_files:
+                        self._mark_candidate_failed(resource, mediainfo.title)
+                        self._record_status("quark_failure", category="empty_share", title=mediainfo.title)
                         logger.info("夸克分享链接无内容")
                         continue
                     matched_file = FileMatcher.match_movie_file(
                         share_files, mediainfo.title, subscribe_filter=subscribe_filter
                     )
                     if not matched_file:
+                        self._mark_candidate_failed(resource, mediainfo.title)
+                        self._record_status("quark_failure", category="no_matching_episode", title=mediainfo.title)
                         continue
                     file_name = matched_file.get("name", "")
                     logger.info(f"找到夸克匹配文件：{file_name}")
@@ -359,6 +404,7 @@ class QuarkSyncHandler:
                         continue
 
                     transferred_count += 1
+                    self._record_status("quark_transferred", count=1, title=mediainfo.title, media_type="电影", stage="夸克转存成功，SmartStrm 后处理待执行")
                     logger.info(f"成功转存夸克电影：{mediainfo.title}")
                     transfer_details.append({
                         "type": "电影", "cloud": "quark", "title": mediainfo.title,
@@ -500,6 +546,7 @@ class QuarkSyncHandler:
                 logger.info(f"未找到 {mediainfo.title} S{season} 的夸克网盘资源")
                 return transferred_count
             logger.info(f"找到 {len(quark_results)} 个夸克网盘资源")
+            self._record_status("quark_candidates", count=len(quark_results), title=mediainfo.title, season=season, media_type="电视剧")
 
             subscribe_filter = SubscribeFilter(
                 quality=subscribe.quality, resolution=subscribe.resolution,
@@ -510,6 +557,10 @@ class QuarkSyncHandler:
             for resource in quark_results:
                 if not missing_episodes:
                     break
+                if self._should_skip_failed_candidate(resource, mediainfo.title, season):
+                    self._record_status("quark_failure", category="suppressed_duplicate", title=mediainfo.title, season=season)
+                    logger.info("夸克候选本轮已确认不可用，跳过重复校验")
+                    continue
                 if transferred_count >= self._max_transfer_per_sync:
                     logger.info(f"已达单次同步上限 {self._max_transfer_per_sync}，夸克链路停止")
                     break
@@ -524,7 +575,9 @@ class QuarkSyncHandler:
                     password = self._candidate_password(resource)
                     status = self._quark_client.check_share_status(share_url, password=password)
                     if not status.is_valid:
-                        logger.warning(f"夸克分享链接无效：{status.status_text}")
+                        self._mark_candidate_failed(resource, mediainfo.title, season)
+                        self._record_status("quark_failure", category=getattr(status, "error_category", "") or "api_error", title=mediainfo.title, season=season)
+                        logger.warning(f"夸克候选跳过：{status.status_text}")
                         continue
                     if not resource_year_matches(
                         mediainfo.year,
@@ -539,6 +592,8 @@ class QuarkSyncHandler:
                         target_season=(season if self._skip_other_season_dirs else None),
                     )
                     if not share_files:
+                        self._mark_candidate_failed(resource, mediainfo.title, season)
+                        self._record_status("quark_failure", category="empty_share", title=mediainfo.title, season=season)
                         logger.info("夸克分享链接无内容")
                         continue
 
@@ -553,6 +608,8 @@ class QuarkSyncHandler:
                             logger.info(f"找到夸克匹配文件：{file_name} -> E{episode:02d}")
                             matched_items.append({"file": matched_file, "episode": episode})
                     if not matched_items:
+                        self._mark_candidate_failed(resource, mediainfo.title, season)
+                        self._record_status("quark_failure", category="no_matching_episode", title=mediainfo.title, season=season)
                         logger.info(f"该夸克分享未匹配到 S{season} 的任何缺失剧集")
                         continue
 
@@ -595,6 +652,10 @@ class QuarkSyncHandler:
                             logger.error(f"夸克转存失败或未确认存在：{mediainfo.title} S{season:02d}E{episode:02d}")
                             continue
                         transferred_count += 1
+                        self._record_status(
+                            "quark_transferred", count=1, title=mediainfo.title, season=season,
+                            episode=episode, media_type="电视剧", stage=f"夸克转存成功 E{episode:02d}，SmartStrm 后处理待执行",
+                        )
                         missing_episodes.remove(episode)
                         success_episodes.append(episode)
                         batch_success_episodes.append(episode)
