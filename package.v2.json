@@ -56,11 +56,12 @@
   "release": true,
   "description": "读取 MoviePilot 订阅，直接搜索 Telegram 公开频道中的 115/夸克分享资源并补齐缺失内容；夸克转存后触发 SmartStrm 本地增量生成 STRM。",
   "labels": "订阅,115网盘,Telegram,追更",
-  "version": "2.1.1",
+  "version": "2.1.2",
   "icon": "https://raw.githubusercontent.com/jxxghp/MoviePilot-Plugins/main/icons/cloud.png",
   "author": "lawzizhuang",
   "level": 1,
   "history": {
+   "v2.1.2": "修复：补充夸克分享校验/目录读取阶段与耗时日志、候选公开来源定位；分享校验接口失败不重试，避免单个候选长时间阻塞整轮追更。",
    "v2.1.1": "新增：插件详情页最近运行状态卡，展示订阅处理、候选去重、夸克失败分类、转存与 SmartStrm 重试摘要。",
    "v2.1.0": "优化：Telegram/夸克候选按分享标识与访问码进行单轮去重，失败候选本轮抑制；夸克分享失败改为脱敏分类提示。",
    "v2.0.1": "修复：夸克转存改用完整目标路径查询/创建目录 FID，解决目标目录不可用导致保存前终止的问题。",

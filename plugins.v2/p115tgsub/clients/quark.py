@@ -269,6 +269,7 @@ class QuarkShareClient:
         return "api_error"
 
     def _get_share_token(self, info: Dict[str, str]) -> str:
+        """获取分享访问令牌；分享校验失败不重试，避免单个候选长时间阻塞同步。"""
         cache_key = self._share_cache_key(info)
         now = time.monotonic()
         with self._cache_lock:
@@ -282,6 +283,7 @@ class QuarkShareClient:
                 "passcode": info.get("password") or "",
             },
             base_url=self.SHARE_PAGE_BASE_URL,
+            retries=0,
         )
         token = str((self._data(result) or {}).get("stoken") or "")
         if not self._is_success(result) or not token:
@@ -303,6 +305,7 @@ class QuarkShareClient:
                 "fetch_share_full_path": "0",
             },
             base_url=self.SHARE_PAGE_BASE_URL,
+            retries=0,
         )
 
     @staticmethod
@@ -365,8 +368,11 @@ class QuarkShareClient:
         if not info:
             status.error_category = "invalid_link"
             return status
+        started_at = time.monotonic()
         try:
+            logger.info("夸克分享校验：正在获取访问令牌")
             stoken = self._get_share_token(info)
+            logger.info("夸克分享校验：访问令牌获取完成，正在读取分享目录")
             result = self._get_share_page(info["share_id"], stoken, size=1)
             if not self._is_success(result):
                 status.error_category = self._classify_share_error(result)
@@ -375,6 +381,7 @@ class QuarkShareClient:
             status.is_valid = True
             status.file_count = self._response_total(result) or 0
             status.share_info = {"share_title": str(data.get("title") or "") if isinstance(data, dict) else ""}
+            logger.info(f"夸克分享校验完成：{time.monotonic() - started_at:.1f} 秒")
         except QuarkShareAccessError as exc:
             status.error_category = exc.category
         except Exception:
@@ -409,6 +416,8 @@ class QuarkShareClient:
         if not info:
             return []
         try:
+            started_at = time.monotonic()
+            logger.info("夸克分享目录读取：开始")
             stoken = self._get_share_token(info)
             output: List[Dict[str, Any]] = []
             file_tokens: Dict[str, Dict[str, str]] = {}
@@ -446,6 +455,7 @@ class QuarkShareClient:
                     page += 1
             with self._cache_lock:
                 self._share_items[self._share_cache_key(info)] = file_tokens
+            logger.info(f"夸克分享目录读取完成：{len(file_tokens)} 个文件，耗时 {time.monotonic() - started_at:.1f} 秒")
             return output
         except Exception as exc:
             logger.warning(f"读取夸克分享文件失败：{type(exc).__name__}")

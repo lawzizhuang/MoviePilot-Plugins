@@ -182,6 +182,13 @@ class QuarkSyncHandler:
             self._failed_candidate_keys.add(key)
 
     @staticmethod
+    def _candidate_source(candidate: Dict[str, Any]) -> str:
+        """返回公开来源定位信息，不包含分享 URL 或访问码。"""
+        channel = str(candidate.get("channel") or "未知频道").strip()
+        message_id = str(candidate.get("message_id") or "").strip()
+        return f"{channel}/{message_id}" if message_id else channel
+
+    @staticmethod
     def _fallback_missing_episodes_from_subscribe(subscribe) -> List[int]:
         """与 115 链路一致：媒体库无缺集明细时按订阅声明范围回退。"""
         try:
@@ -323,7 +330,7 @@ class QuarkSyncHandler:
                 if not self._resource_title_matches(mediainfo, resource_title):
                     logger.info(f"跳过标题未明确匹配当前订阅的夸克候选：{safe_resource_title}")
                     continue
-                logger.info(f"检查夸克分享：{safe_resource_title}")
+                logger.info(f"检查夸克分享（来源 {self._candidate_source(resource)}）：{safe_resource_title}")
                 try:
                     password = self._candidate_password(resource)
                     status = self._quark_client.check_share_status(share_url, password=password)
@@ -570,7 +577,7 @@ class QuarkSyncHandler:
                 if not self._resource_title_matches(mediainfo, resource_title):
                     logger.info(f"跳过标题未明确匹配当前订阅的夸克候选：{safe_resource_title}")
                     continue
-                logger.info(f"检查夸克分享：{safe_resource_title}")
+                logger.info(f"检查夸克分享（来源 {self._candidate_source(resource)}）：{safe_resource_title}")
                 try:
                     password = self._candidate_password(resource)
                     status = self._quark_client.check_share_status(share_url, password=password)

@@ -117,6 +117,9 @@ def test_read_and_save_selected_file():
     detail_call = next(call for call in client.calls if call[1] == "share/sharepage/detail")
     assert detail_call[2]["params"]["ver"] == "2"
     assert detail_call[2]["params"]["_size"] == 1
+    assert detail_call[2]["retries"] == 0
+    token_call = next(call for call in client.calls if call[1] == "share/sharepage/token")
+    assert token_call[2]["retries"] == 0
     files = client.list_share_files(url)
     assert files[0]["is_dir"] is True
     assert files[1]["id"] == "video-1"
