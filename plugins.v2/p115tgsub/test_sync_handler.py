@@ -56,6 +56,12 @@ sys.modules[utils.__name__] = utils
 handlers = types.ModuleType(f"{package_name}.handlers")
 handlers.__path__ = []
 sys.modules[handlers.__name__] = handlers
+offline_spec = importlib.util.spec_from_file_location(
+    f"{package_name}.handlers.offline_queue", Path(__file__).parent / "handlers" / "offline_queue.py"
+)
+offline_module = importlib.util.module_from_spec(offline_spec)
+sys.modules[offline_spec.name] = offline_module
+offline_spec.loader.exec_module(offline_module)
 search = types.ModuleType(f"{package_name}.handlers.search")
 search.SearchHandler = type("SearchHandler", (), {})
 sys.modules[search.__name__] = search

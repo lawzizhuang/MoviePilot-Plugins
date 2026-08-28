@@ -163,6 +163,13 @@ def test_quark_url_with_query_password():
     assert client._extract_urls("https://pan.quark.cn/s/Qk654321?pwd=cd34", []) == []
 
 
+def test_direct_ed2k_and_magnet_are_extracted_from_message_body():
+    ed2k = "ed2k://|file|测试剧集.2026.S01E02.1080p.mkv|1024|0123456789abcdef0123456789abcdef|/"
+    magnet = "magnet:?xt=urn:btih:abcdef&dn=%E6%B5%8B%E8%AF%95%E5%89%A7%E9%9B%86.S01E03.mkv"
+    assert TelegramWebClient._extract_offline_urls(f"ED2K:{ed2k}\n{magnet}") == [ed2k, magnet]
+    assert TelegramWebClient._extract_offline_urls("", [magnet]) == [magnet]
+
+
 def test_quark_duplicate_keeps_access_code_variants_and_counts_merge():
     search_url_a = "https://t.me/s/Aaaaa?q=%E4%B8%89%E4%BD%93"
     search_url_b = "https://t.me/s/Bbbbb?q=%E4%B8%89%E4%BD%93"
@@ -225,6 +232,7 @@ if __name__ == "__main__":
     test_title_filter_runs_before_result_limit()
     test_quark_links_are_extracted_and_password_in_text()
     test_quark_url_with_query_password()
+    test_direct_ed2k_and_magnet_are_extracted_from_message_body()
     test_quark_duplicate_keeps_access_code_variants_and_counts_merge()
     test_telegraph_quark_link_and_access_code_are_extracted()
     test_single_character_title_can_follow_telegraph()

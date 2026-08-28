@@ -133,6 +133,7 @@ class TelegramWebClient:
     _115_HOSTS = {"115.com", "115cdn.com", "anxia.com"}
     _QUARK_HOSTS = {"pan.quark.cn"}
     _URL_RE = re.compile(r"https?://[^\s<>\"'，。；;]+", re.IGNORECASE)
+    _OFFLINE_RE = re.compile(r"(?:ed2k://\|file\|[^\s<>\"']+?\|/|magnet:\?[^\s<>\"']+)", re.IGNORECASE)
     _TRAILING_URL_CHARS = ".,，。;；:：!！?？)]}〉》\"'"
 
     def __init__(
@@ -242,6 +243,22 @@ class TelegramWebClient:
     def _extract_quark_urls(cls, text: str, links: Iterable[str] = ()) -> List[str]:
         """仅提取 pan.quark.cn 分享链接。"""
         return cls._extract_links(text, links, ("quark",))
+
+    @classmethod
+    def _extract_offline_urls(cls, text: str, links: Iterable[str] = ()) -> List[str]:
+        """提取公开 Telegram 消息直接包含的 ED2K / 磁力，不访问第三方资源页。"""
+        output: List[str] = []
+        seen = set()
+        candidates = list(links or []) + cls._OFFLINE_RE.findall(html.unescape(str(text or "")))
+        for raw in candidates:
+            url = html.unescape(str(raw or "").strip()).rstrip(".,，。;；")
+            if not cls._OFFLINE_RE.fullmatch(url):
+                continue
+            key = url.casefold()
+            if key and key not in seen:
+                seen.add(key)
+                output.append(url)
+        return output
 
     @classmethod
     def _extract_telegraph_urls(cls, links: Iterable[str]) -> List[str]:
@@ -407,6 +424,32 @@ class TelegramWebClient:
     def search_quark_resources(self, keyword: str, required_title: str = "") -> List[Dict[str, str]]:
         """搜索所有已配置频道，返回标题已初筛的 pan.quark.cn 资源格式。"""
         return self._search_links(keyword, required_title, "quark")
+
+    def search_offline_resources(self, keyword: str, required_title: str = "") -> List[Dict[str, str]]:
+        """只搜索 Telegram 公开消息正文中直接发布的 ED2K / 磁力候选。"""
+        if not self.channels:
+            return []
+        results: List[Dict[str, str]] = []
+        seen = set()
+        for channel in self.channels:
+            messages = self.search_messages(channel, keyword, required_title=required_title)
+            if not messages:
+                continue
+            for message in messages:
+                for url in self._extract_offline_urls(message.text, message.links):
+                    key = url.casefold()
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    self._search_stats["raw_candidates"] += 1
+                    results.append({
+                        "url": url, "title": message.text or keyword, "text": message.text or "",
+                        "update_time": message.published_at, "channel": message.channel,
+                        "message_id": message.message_id, "message_url": message.message_url,
+                        "kind": "ed2k" if url.casefold().startswith("ed2k:") else "magnet",
+                    })
+        logger.info(f"Telegram 公开频道搜索“{keyword}”完成，找到 {len(results)} 个 ED2K/磁力候选")
+        return results
 
     def _search_links(self, keyword: str, required_title: str, kind: str) -> List[Dict[str, str]]:
         """按资源类型（115/quark）搜索全部频道并返回候选。"""

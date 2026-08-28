@@ -29,7 +29,7 @@ class P115TGSub(_PluginBase):
     plugin_name = "115 TG订阅追更"
     plugin_desc = "读取 MoviePilot 订阅，直接搜索 Telegram 公开频道中的 115/夸克分享资源并补齐缺失内容。"
     plugin_icon = "https://raw.githubusercontent.com/jxxghp/MoviePilot-Plugins/main/icons/cloud.png"
-    plugin_version = "2.1.3"
+    plugin_version = "2.2.0"
     plugin_author = "lawzizhuang"
     author_url = "https://github.com/lawzizhuang/MoviePilot-Plugins"
     plugin_config_prefix = "p115tgsub_"
@@ -62,6 +62,9 @@ class P115TGSub(_PluginBase):
     _smartstrm_task = "tv,movie"
     _smartstrm_xlist_path_fix = ""
     _strm_retry_max = 5
+    _offline_enabled = False
+    _offline_max_per_sync = 5
+    _offline_max_wait_hours = 24
     _quark_client = None
     _strm_client = None
     _sync_running = False
@@ -149,6 +152,9 @@ class P115TGSub(_PluginBase):
         self._smartstrm_task = str(config.get("smartstrm_task", "tv,movie") or "tv,movie").strip()
         self._smartstrm_xlist_path_fix = str(config.get("smartstrm_xlist_path_fix", "") or "").strip()
         self._strm_retry_max = self._int_config(config.get("strm_retry_max", 5), 5, 1, 20)
+        self._offline_enabled = bool(config.get("offline_enabled", False))
+        self._offline_max_per_sync = self._int_config(config.get("offline_max_per_sync", 5), 5, 1, 20)
+        self._offline_max_wait_hours = self._int_config(config.get("offline_max_wait_hours", 24), 24, 1, 168)
         try:
             self._init_clients()
             self._init_handlers()
@@ -270,6 +276,11 @@ class P115TGSub(_PluginBase):
             save_data_func=self.save_data,
             dry_run=self._dry_run,
         )
+        self._sync_handler.configure_offline_download(
+            enabled=self._offline_enabled,
+            max_per_sync=self._offline_max_per_sync,
+            max_wait_hours=self._offline_max_wait_hours,
+        )
         self._quark_handler = QuarkSyncHandler(
             quark_client=self._quark_client,
             search_handler=self._search_handler,
@@ -306,6 +317,7 @@ class P115TGSub(_PluginBase):
             "subscribe_count": subscribe_count, "transferred_115": 0, "transferred_quark": 0,
             "telegram_raw_candidates": 0, "telegram_duplicates_merged": 0,
             "quark_candidates": 0, "quark_failures": {}, "strm": {"triggered": 0, "failed": 0, "stalled": 0},
+            "offline": {"pending": 0, "completed": 0, "expired": 0},
             "media": {}, "last_error": "",
         }
 
@@ -337,6 +349,7 @@ class P115TGSub(_PluginBase):
         telegram_stats = self._telegram_client.get_search_stats() if self._telegram_client else {}
         self._run_status.update({
             "finished_at": self._now(), "result": result,
+            "offline": self._sync_handler.offline_stats() if self._sync_handler else {"pending": 0, "completed": 0, "expired": 0},
             "transferred_115": transferred_115, "transferred_quark": transferred_quark,
             "telegram_raw_candidates": int(telegram_stats.get("raw_candidates") or 0),
             "telegram_duplicates_merged": int(telegram_stats.get("duplicates_merged") or 0),
@@ -359,6 +372,8 @@ class P115TGSub(_PluginBase):
             "strm_enabled": self._strm_enabled, "smartstrm_webhook_url": self._smartstrm_webhook_url,
             "smartstrm_task": self._smartstrm_task, "smartstrm_xlist_path_fix": self._smartstrm_xlist_path_fix,
             "strm_retry_max": self._strm_retry_max,
+            "offline_enabled": self._offline_enabled, "offline_max_per_sync": self._offline_max_per_sync,
+            "offline_max_wait_hours": self._offline_max_wait_hours,
         }
 
     def stop_service(self) -> None:
@@ -446,6 +461,8 @@ class P115TGSub(_PluginBase):
 
     def _do_sync(self) -> bool:
         self._start_run_status()
+        if self._sync_handler:
+            self._sync_handler.begin_run()
         if self._quark_handler:
             self._quark_handler.begin_run()
         # SmartStrm 队列独立于本轮搜索/网盘状态；测试模式不触发任何后处理。
@@ -525,6 +542,10 @@ class P115TGSub(_PluginBase):
                 quark_ready
                 and transferred_total < self._max_transfer_per_sync
                 and not self._quark_client.transfer_risk_blocked
+                and (
+                    subscribe.type == MediaType.TV.value
+                    or not self._sync_handler.offline_pending(subscribe.id, media_type="电影")
+                )
             ):
                 before_quark = transferred_total
                 if subscribe.type == MediaType.MOVIE.value:
@@ -533,9 +554,18 @@ class P115TGSub(_PluginBase):
                     )
                 elif subscribe.type == MediaType.TV.value:
                     transferred_total = self._quark_handler.process_tv_subscribe(
-                        subscribe, history, transfer_details_quark, transferred_total, set()
+                        subscribe, history, transfer_details_quark, transferred_total,
+                        self._sync_handler.offline_pending(
+                            subscribe.id, season=getattr(subscribe, "season", 0) or 0, media_type="电视剧"
+                        ),
                     )
                 transferred_quark += transferred_total - before_quark
+            if (
+                quark_ready
+                and subscribe.type != MediaType.TV.value
+                and self._sync_handler.offline_pending(subscribe.id, media_type="电影")
+            ):
+                logger.info(f"{subscribe.name} 存在 115 离线下载中的媒体，夸克兜底暂不处理")
             if transferred_total >= self._max_transfer_per_sync:
                 break
 

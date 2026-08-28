@@ -1,6 +1,7 @@
 """
 115网盘客户端封装
 """
+import hashlib
 import time
 import threading
 from pathlib import Path
@@ -882,6 +883,34 @@ class P115ClientManager:
                     return False
 
         return False
+
+    def submit_offline_task(self, url: str, save_path: str) -> bool:
+        """提交 ED2K/磁力云下载到指定目录；绝不使用 115 默认离线路径。"""
+        if not self.client or not str(url or "").strip():
+            return False
+        target_cid = self.get_pid_by_path(save_path, mkdir=True)
+        if target_cid == -1:
+            logger.error(f"115 离线下载目标目录不可用：{save_path}")
+            return False
+        try:
+            self.rate_limiter.wait()
+            self._api_call_count += 1
+            response = self.client.clouddownload_task_add_url({
+                "url": str(url).strip(),
+                "wp_path_id": target_cid,
+            })
+            if response.get("state"):
+                logger.info(f"115 离线下载任务已提交至指定目录：{save_path}")
+                return True
+            logger.warning("115 离线下载任务提交失败")
+        except Exception as exc:
+            logger.warning(f"115 离线下载任务提交异常：{type(exc).__name__}")
+        return False
+
+    @staticmethod
+    def offline_resource_key(url: str) -> str:
+        """用于持久化去重的不可逆标识，不保存 ED2K/磁力原文。"""
+        return hashlib.sha256(str(url or "").encode("utf-8")).hexdigest()[:24]
 
     def list_files(self, path: str) -> List[dict]:
         """

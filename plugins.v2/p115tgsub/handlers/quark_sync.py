@@ -535,6 +535,10 @@ class QuarkSyncHandler:
                     f"{mediainfo.title_year} S{season} 跳过已存在的 {len(all_existing)} 集 "
                     f"(历史:{len(transferred_episodes)}, 夸克网盘:{len(existing_in_cloud)})"
                 )
+            # 115 离线下载中的集数由主处理器传入，避免同一集进入夸克兜底。
+            if exclude_ids:
+                missing_episodes = [ep for ep in missing_episodes if ep not in exclude_ids]
+                logger.info(f"{mediainfo.title_year} S{season} 跳过 115 离线下载中的剧集：{sorted(exclude_ids)}")
             if not missing_episodes:
                 if all_existing and not self._dry_run:
                     self._subscribe_handler.check_and_finish_subscribe(

@@ -5,6 +5,7 @@
 import datetime
 import re
 import unicodedata
+from urllib.parse import parse_qs, unquote, urlsplit
 from typing import List, Dict, Any, Set, Optional, Callable
 
 from app.core.config import global_vars
@@ -19,6 +20,7 @@ from app.schemas.types import MediaType, NotificationType
 from app.utils.string import StringUtils
 
 from ..utils import FileMatcher, SubscribeFilter, resource_year_matches, sanitize_resource_text
+from .offline_queue import OfflineQueue
 from .search import SearchHandler
 from .subscribe import SubscribeHandler
 
@@ -75,6 +77,127 @@ class SyncHandler:
         self._get_data = get_data_func
         self._save_data = save_data_func
         self._dry_run = bool(dry_run)
+        self._offline_enabled = False
+        self._offline_max_per_sync = 0
+        self._offline_queue = None
+        self._offline_submitted_this_run = 0
+
+    def configure_offline_download(self, enabled: bool, max_per_sync: int, max_wait_hours: int) -> None:
+        self._offline_enabled = bool(enabled)
+        self._offline_max_per_sync = max(1, min(int(max_per_sync or 5), 20))
+        if self._get_data and self._save_data:
+            self._offline_queue = OfflineQueue(self._get_data, self._save_data, max_wait_hours=max_wait_hours)
+
+    @staticmethod
+    def _offline_file_name(resource: Dict[str, Any]) -> str:
+        """从 ED2K 或磁力 dn 参数提取文件名；缺少文件名的磁力不提交。"""
+        url = str(resource.get("url") or "")
+        match = re.match(r"ed2k://\|file\|([^|]+)\|", url, re.IGNORECASE)
+        if match:
+            return unquote(match.group(1))
+        if url.casefold().startswith("magnet:"):
+            names = parse_qs(urlsplit(url).query).get("dn") or []
+            return unquote(str(names[0])) if names else ""
+        return ""
+
+    def _submit_offline(self, resource: Dict[str, Any], subscribe, mediainfo: MediaInfo, save_dir: str,
+                        media_type: str, season: int = 0, episode: int = 0) -> bool:
+        """提交前先完成文件名/季集校验；仅提交至现有插件配置的目标目录。"""
+        if not self._offline_enabled or not self._offline_queue:
+            return False
+        url = str(resource.get("url") or "")
+        resource_title = str(resource.get("title") or "")
+        file_name = self._offline_file_name(resource)
+        if not url or not self._resource_title_matches(mediainfo, resource_title):
+            return False
+        if not resource_year_matches(mediainfo.year, resource_title, title=mediainfo.title):
+            return False
+        if media_type == "电视剧" and not FileMatcher.match_episode_file(
+            [{"name": file_name, "is_dir": False}], mediainfo.title, season, episode
+        ):
+            return False
+        if media_type == "电影" and not FileMatcher.match_movie_file(
+            [{"name": file_name, "is_dir": False, "size": 1024 * 1024 * 1024}], mediainfo.title
+        ):
+            return False
+        if self._offline_submitted_this_run >= self._offline_max_per_sync:
+            return False
+        if media_type == "电视剧" and episode in self._offline_queue.pending_episodes(subscribe.id, season):
+            return False
+        if media_type == "电影" and self._offline_queue.pending_movie(subscribe.id):
+            return False
+        if self._dry_run:
+            # 测试模式严格只读：仅验证既有目标目录可见性，不创建目录、不提交云下载。
+            target_cid = self._p115_manager.get_pid_by_path(save_dir, mkdir=False)
+            if target_cid == -1:
+                logger.warning(f"测试模式：115 离线下载目标目录尚不存在，正式模式会按插件路径创建：{save_dir}")
+            else:
+                logger.info(f"测试模式：115 离线下载目标目录可用：{save_dir}")
+            logger.info(f"测试模式：已验证 115 离线{resource.get('kind', '资源')}候选，不提交任务：{file_name}")
+            return True
+        if not self._p115_manager.submit_offline_task(url, save_dir):
+            return False
+        queued = self._offline_queue.enqueue(
+            subscribe_id=subscribe.id, title=mediainfo.title, year=mediainfo.year, media_type=media_type,
+            savepath=save_dir, resource_key=self._p115_manager.offline_resource_key(url), file_name=file_name,
+            season=season, episode=episode,
+        )
+        if queued:
+            self._offline_submitted_this_run += 1
+            target = f" S{season:02d}E{episode:02d}" if episode else ""
+            logger.info(f"115 离线下载已进入待确认队列：{mediainfo.title}{target}")
+        return queued
+
+    def begin_run(self) -> None:
+        self._offline_submitted_this_run = 0
+        if self._offline_queue:
+            expired = self._offline_queue.expire()
+            if expired:
+                logger.warning(f"115 离线下载超时并已释放夸克兜底：{expired} 项")
+
+    def offline_pending(self, subscribe_id: Any, season: int = 0, media_type: str = "") -> Set[int] | bool:
+        if not self._offline_queue:
+            return set() if media_type == "电视剧" else False
+        if media_type == "电视剧":
+            return self._offline_queue.pending_episodes(subscribe_id, season)
+        return self._offline_queue.pending_movie(subscribe_id)
+
+    def offline_stats(self) -> Dict[str, int]:
+        return self._offline_queue.stats() if self._offline_queue else {"pending": 0, "completed": 0, "expired": 0}
+
+    def _reconcile_offline_movie(self, subscribe, mediainfo: MediaInfo, save_dir: str) -> bool:
+        if not self._offline_queue or not self._offline_queue.pending_movie(subscribe.id):
+            return
+        existing = self._p115_manager.list_files(save_dir)
+        if FileMatcher.match_movie_file(existing, mediainfo.title):
+            self._offline_queue.complete_movie(subscribe.id)
+            if not self._dry_run:
+                self._subscribe_handler.check_and_finish_subscribe(subscribe, mediainfo, success_episodes=[1])
+            logger.info(f"115 离线下载文件已确认存在：{mediainfo.title}")
+            return True
+        return False
+
+    def _reconcile_offline_tv(self, subscribe, mediainfo: MediaInfo, season: int, save_dir: str) -> Set[int]:
+        if not self._offline_queue:
+            return set()
+        pending = self._offline_queue.pending_episodes(subscribe.id, season)
+        if not pending:
+            return set()
+        existing = FileMatcher.check_existing_episodes(self._p115_manager, mediainfo, season, save_dir)
+        completed = self._offline_queue.complete_tv(subscribe.id, season, existing)
+        completed_episodes = {int(item.get("episode") or 0) for item in completed}
+        if completed_episodes and not self._dry_run:
+            self._subscribe_handler.check_and_finish_subscribe(
+                subscribe, mediainfo, success_episodes=sorted(completed_episodes)
+            )
+        if completed:
+            logger.info(f"115 离线下载文件已确认存在：{len(completed)} 集")
+        return pending - completed_episodes
+
+    def _search_offline_resources(self, mediainfo: MediaInfo, media_type: MediaType, season: int = None) -> List[Dict[str, Any]]:
+        if not self._offline_enabled:
+            return []
+        return self._search_handler.search_offline_resources(mediainfo, media_type, season)
 
     @staticmethod
     def _fallback_missing_episodes_from_subscribe(subscribe) -> List[int]:
@@ -175,6 +298,11 @@ class SyncHandler:
                 logger.warn(f"无法识别媒体信息：{subscribe.name}")
                 return transferred_count
 
+            # 115 离线任务完成后仍须以目标目录真实文件为准，再走既有订阅闭环。
+            offline_save_dir = f"{self._movie_save_path}/{mediainfo.title} ({mediainfo.year})" if mediainfo.year else f"{self._movie_save_path}/{mediainfo.title}"
+            if self._reconcile_offline_movie(subscribe, mediainfo, offline_save_dir):
+                return transferred_count
+
             # 搜索网盘资源
             p115_results = self._search_handler.search_resources(
                 mediainfo=mediainfo,
@@ -182,10 +310,9 @@ class SyncHandler:
             )
 
             if not p115_results:
-                logger.info(f"未找到电影 {mediainfo.title} 的 115 网盘资源")
-                return transferred_count
-
-            logger.info(f"找到 {len(p115_results)} 个 115 网盘资源")
+                logger.info(f"未找到电影 {mediainfo.title} 的 115 分享资源，继续检查 ED2K/磁力候选")
+            else:
+                logger.info(f"找到 {len(p115_results)} 个 115 网盘资源")
 
             # 创建订阅过滤条件
             subscribe_filter = SubscribeFilter(
@@ -340,6 +467,12 @@ class SyncHandler:
                     logger.error(f"处理 115 分享链接出错：{str(e)}")
                     continue
 
+            if not movie_transferred and not self.offline_pending(subscribe.id, media_type="电影"):
+                for resource in self._search_offline_resources(mediainfo, MediaType.MOVIE):
+                    if self._submit_offline(resource, subscribe, mediainfo, offline_save_dir, "电影"):
+                        logger.info(f"电影 {mediainfo.title} 已提交 115 离线下载，等待目标目录文件确认")
+                        break
+
         except Exception as e:
             logger.error(f"处理电影订阅 {subscribe.name} 出错：{str(e)}")
 
@@ -491,6 +624,11 @@ class SyncHandler:
                             if ep not in episode_history_scores or score > episode_history_scores[ep]:
                                 episode_history_scores[ep] = score
 
+            # 115 离线任务完成后仍须以目标目录真实文件为准，再走既有订阅闭环。
+            show_folder = f"{mediainfo.title} ({mediainfo.year})" if mediainfo.year else mediainfo.title
+            offline_save_dir = f"{self._save_path}/{show_folder}/Season {season}"
+            offline_pending = self._reconcile_offline_tv(subscribe, mediainfo, season, offline_save_dir)
+
             # 构建转存路径（标题 + 年份，格式如 "权力的游戏 (2011)"）
             show_folder = f"{mediainfo.title} ({mediainfo.year})" if mediainfo.year else mediainfo.title
             save_dir = f"{self._save_path}/{show_folder}/Season {season}"
@@ -529,6 +667,12 @@ class SyncHandler:
                     # 缺失集数已全部补齐，清除历史积分记录
                     if hasattr(self._search_handler, 'clear_sub_points'):
                         self._search_handler.clear_sub_points(sub_key)
+                return transferred_count
+
+            if offline_pending:
+                missing_episodes = [ep for ep in missing_episodes if ep not in offline_pending]
+                logger.info(f"{mediainfo.title_year} S{season} 跳过 115 离线下载中的剧集：{sorted(offline_pending)}")
+            if not missing_episodes:
                 return transferred_count
 
             # 过滤掉尚未播出的剧集，避免浪费搜索和解锁资源
@@ -604,6 +748,19 @@ class SyncHandler:
                 )
 
                 if not p115_results:
+                    offline_results = self._search_offline_resources(mediainfo, MediaType.TV, season)
+                    submitted = 0
+                    for resource in offline_results:
+                        if self._offline_submitted_this_run >= self._offline_max_per_sync or not missing_episodes:
+                            break
+                        for episode in missing_episodes[:]:
+                            if self._submit_offline(resource, subscribe, mediainfo, save_dir, "电视剧", season, episode):
+                                submitted += 1
+                                if not self._dry_run:
+                                    missing_episodes.remove(episode)
+                                break
+                    if submitted:
+                        logger.info(f"[{source.upper()}] 已提交 {submitted} 个 115 离线下载任务，等待目标目录文件确认")
                     remaining_sources = enabled_sources[source_index + 1:]
                     if remaining_sources:
                         logger.info(f"[{source.upper()}] 未找到资源，将尝试下一个源: {remaining_sources[0].upper()}")
@@ -816,7 +973,21 @@ class SyncHandler:
                         logger.error(f"处理 115 分享链接出错：{str(e)}")
                         continue
 
-                # 当前源处理完成
+                # 当前源处理完成；115 分享未补齐时再尝试 Telegram 正文直链 ED2K/磁力。
+                if missing_episodes and self._offline_submitted_this_run < self._offline_max_per_sync:
+                    submitted = 0
+                    for resource in self._search_offline_resources(mediainfo, MediaType.TV, season):
+                        if self._offline_submitted_this_run >= self._offline_max_per_sync or not missing_episodes:
+                            break
+                        for episode in missing_episodes[:]:
+                            if self._submit_offline(resource, subscribe, mediainfo, save_dir, "电视剧", season, episode):
+                                submitted += 1
+                                if not self._dry_run:
+                                    missing_episodes.remove(episode)
+                                break
+                    if submitted:
+                        logger.info(f"[{source.upper()}] 已提交 {submitted} 个 115 离线下载任务，等待目标目录文件确认")
+
                 if missing_episodes:
                     remaining_sources = enabled_sources[source_index + 1:]
                     if remaining_sources:

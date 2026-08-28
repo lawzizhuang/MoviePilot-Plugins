@@ -74,10 +74,18 @@ class UIConfig:
                         "component": "VCol", "props": {"cols": 12}, "content": [{
                             "component": "VAlert", "props": {
                                 "type": "info", "variant": "tonal",
-                                "text": "夸克链路：运行时复用已安装“夸克网盘存储（QuarkDisk）”的 Cookie，不复制、不展示凭据。仅当 115 链路未找到可用资源时才尝试夸克；同一集不会同时转存到两个网盘。夸克网盘只保存媒体文件，STRM/NFO/图片由 SmartStrm 在本机生成。"
+                                "text": "115 离线下载：仅处理 Telegram 公开消息正文直接包含的 ED2K 或磁力链接，并显式保存至上方电视剧/电影转存目录；提交任务不算成功，只有目标目录确认出现媒体文件才更新订阅。SeedHub 等第三方资源页暂不抓取。"
                             }
                         }]
                     }]
+                },
+                {
+                    "component": "VRow",
+                    "content": [
+                        {"component": "VCol", "props": {"cols": 12, "md": 4}, "content": [{"component": "VSwitch", "props": {"model": "offline_enabled", "label": "启用 115 ED2K / 磁力离线下载", "hint": "115 分享无可用资源时尝试；默认关闭。"}}]},
+                        {"component": "VCol", "props": {"cols": 12, "md": 4}, "content": [{"component": "VTextField", "props": {"model": "offline_max_per_sync", "label": "单次最大新建离线任务数", "type": "number", "placeholder": "5"}}]},
+                        {"component": "VCol", "props": {"cols": 12, "md": 4}, "content": [{"component": "VTextField", "props": {"model": "offline_max_wait_hours", "label": "离线任务最长等待（小时）", "type": "number", "placeholder": "24", "hint": "超时后释放夸克兜底。"}}]},
+                    ],
                 },
                 {
                     "component": "VRow",
@@ -177,6 +185,7 @@ class UIConfig:
             "telegram_enabled": True, "telegram_channels": "QukanMovie\nlsp115\nvip115hot",
             "telegram_timeout": 20, "telegram_max_results": 10, "telegram_max_telegraph_pages": 3,
             "max_transfer_per_sync": 20, "batch_size": 10, "skip_other_season_dirs": True, "dry_run": True,
+            "offline_enabled": False, "offline_max_per_sync": 5, "offline_max_wait_hours": 24,
             "quark_enabled": False, "quark_timeout": 30, "quark_risk_cooldown": 1800,
             "quark_save_path": "/夸克接收/MoviePilot-TG/TV", "quark_movie_save_path": "/夸克接收/MoviePilot-TG/Movie",
             "strm_enabled": False, "smartstrm_webhook_url": "", "smartstrm_task": "tv,movie",
@@ -199,6 +208,7 @@ class UIConfig:
             f"{failure_names.get(key, key)} {value}" for key, value in failures.items() if value
         ) or "无"
         strm = status.get("strm") or {}
+        offline = status.get("offline") or {}
         media = status.get("media") or {}
         media_lines = [f"{title}：{stage}" for title, stage in list(media.items())[-5:]]
         recent_count = len(history)
@@ -210,6 +220,7 @@ class UIConfig:
             f"Telegram 候选 {status.get('telegram_raw_candidates', 0)} · 合并重复 {status.get('telegram_duplicates_merged', 0)} · "
             f"夸克候选 {status.get('quark_candidates', 0)}\n"
             f"夸克跳过：{failure_text}\n"
+            f"115 离线下载：待确认 {offline.get('pending', 0)} / 已确认 {offline.get('completed', 0)} / 超时 {offline.get('expired', 0)}\n"
             f"SmartStrm 重试：成功 {strm.get('triggered', 0)} / 失败 {strm.get('failed', 0)} / 停滞 {strm.get('stalled', 0)}"
         )
         if media_lines:

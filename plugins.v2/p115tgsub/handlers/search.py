@@ -43,6 +43,23 @@ class SearchHandler:
                 return results
         return []
 
+    def search_offline_resources(
+        self,
+        mediainfo: MediaInfo,
+        media_type: MediaType,
+        season: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        """搜索 Telegram 公开消息直接发布的 ED2K / 磁力候选。"""
+        if not self._telegram_enabled or not self._telegram_client:
+            return []
+        for keyword in self._build_keywords(mediainfo, media_type, season):
+            logger.info(f"使用 Telegram 公开频道搜索 115 离线资源：{mediainfo.title}，关键词：{keyword!r}")
+            results = self._telegram_client.search_offline_resources(keyword, required_title=mediainfo.title)
+            if results:
+                logger.info(f"Telegram 关键词 {keyword!r} 找到 {len(results)} 个 ED2K/磁力候选")
+                return results
+        return []
+
     def search_single_source(
         self,
         source: str,
