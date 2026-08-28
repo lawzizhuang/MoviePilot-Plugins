@@ -213,6 +213,11 @@ def test_metadata_total_drives_pagination():
     assert [entry["name"] for entry in entries] == ["f1.mkv", "f2.mkv"]
 
 
+def test_empty_page_stops_even_when_server_total_is_incorrect():
+    response = {"status": 2000000, "code": 0, "data": {"list": []}, "metadata": {"_total": 99}}
+    assert not QuarkShareClient._has_more_pages(response, received=0, loaded=0, page_size=50)
+
+
 def test_http_error_response_is_never_success():
     assert not QuarkShareClient._is_success({"status": 500, "code": 500, "data": {}})
 
@@ -255,6 +260,7 @@ if __name__ == "__main__":
     test_skip_other_season_directory()
     test_explicit_dir_field_overrides_file_type_fallback()
     test_metadata_total_drives_pagination()
+    test_empty_page_stops_even_when_server_total_is_incorrect()
     test_http_error_response_is_never_success()
     test_http_error_body_cannot_become_success()
     test_share_failure_categories_are_safe_and_specific()

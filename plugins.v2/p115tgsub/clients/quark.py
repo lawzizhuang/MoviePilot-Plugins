@@ -358,7 +358,9 @@ class QuarkShareClient:
 
     @classmethod
     def _has_more_pages(cls, response: Dict[str, Any], received: int, loaded: int, page_size: int) -> bool:
-        """优先使用夸克返回的总数分页；缺失时再按请求页大小保守判断。"""
+        """优先使用夸克返回的总数分页；空页必须终止，避免异常总数导致无限翻页。"""
+        if received <= 0:
+            return False
         total = cls._response_total(response)
         return loaded < total if total is not None else received >= page_size
 
