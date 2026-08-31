@@ -485,6 +485,8 @@ class P115TGSub(_PluginBase):
 
     def _do_sync(self) -> bool:
         self._start_run_status()
+        if self._seedhub_client:
+            self._seedhub_client.begin_run()
         if self._sync_handler:
             self._sync_handler.begin_run()
         if self._quark_handler:

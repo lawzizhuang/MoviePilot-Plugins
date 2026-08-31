@@ -107,6 +107,17 @@ class SeedHubClient:
             "Referer": f"{self.BASE_URL}/",
         })
         self._page_cache: Dict[str, str] = {}
+        self._blocked = False
+        self._blocked_status = 0
+
+    @property
+    def blocked(self) -> bool:
+        return self._blocked
+
+    def begin_run(self) -> None:
+        """重置本轮访问熔断；避免某个频道搜索结果触发连续站点请求。"""
+        self._blocked = False
+        self._blocked_status = 0
 
     @classmethod
     def movie_id_from_url(cls, url: str) -> str:
@@ -126,10 +137,20 @@ class SeedHubClient:
     def _get(self, url: str) -> Optional[str]:
         if url in self._page_cache:
             return self._page_cache[url]
+        if self._blocked:
+            return None
         try:
             response = self._session.get(url, timeout=self.timeout, proxies=self._proxies)
             if response.status_code != 200:
-                logger.warning(f"SeedHub 公开页面请求失败：HTTP {response.status_code}")
+                # 403 / 429 均表示继续扫描其他页面只会扩大访问压力；本轮立即熔断。
+                if response.status_code in {403, 429}:
+                    self._blocked_status = response.status_code
+                    self._blocked = True
+                    logger.warning(
+                        f"SeedHub 公开页面访问受限：HTTP {response.status_code}，本轮停止继续请求"
+                    )
+                else:
+                    logger.warning(f"SeedHub 公开页面请求失败：HTTP {response.status_code}")
                 return None
             self._page_cache[url] = response.text
             return response.text

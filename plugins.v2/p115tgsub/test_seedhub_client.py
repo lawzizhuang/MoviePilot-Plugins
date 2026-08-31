@@ -59,7 +59,40 @@ def test_only_public_numeric_movie_page_is_accepted():
     assert SeedHubClient.movie_id_from_url("https://evil.example/movies/127534/") == ""
 
 
+class _Response:
+    def __init__(self, status_code, text=""):
+        self.status_code = status_code
+        self.text = text
+
+
+class _Session:
+    def __init__(self, response):
+        self.headers = {}
+        self.response = response
+        self.calls = 0
+
+    def get(self, *args, **kwargs):
+        self.calls += 1
+        return self.response
+
+
+def test_seedhub_access_limit_stops_remaining_requests():
+    client = object.__new__(SeedHubClient)
+    client.timeout = 20
+    client._proxies = None
+    client._page_cache = {}
+    client._blocked = False
+    client._blocked_status = 0
+    session = _Session(_Response(429))
+    client._session = session
+    assert client._get("https://sidhub.cc/movies/1/") is None
+    assert client.blocked
+    assert client._get("https://sidhub.cc/movies/2/") is None
+    assert session.calls == 1
+
+
 if __name__ == "__main__":
     test_seed_list_and_base64_magnet_contract()
     test_only_public_numeric_movie_page_is_accepted()
+    test_seedhub_access_limit_stops_remaining_requests()
     print("seedhub client tests: OK")

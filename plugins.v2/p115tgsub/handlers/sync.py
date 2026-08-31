@@ -279,8 +279,13 @@ class SyncHandler:
                            episodes: List[int], subscribe_filter: SubscribeFilter) -> bool:
         targets = set(episodes)
         for resource in self._search_handler.search_seedhub_resources(mediainfo, MediaType.TV, season):
+            bundle_episodes = self._seedhub_episode_range(str(resource.get("title") or ""), season)
+            # 完整季包只要求覆盖当前需要回补的集数；避免订阅声明的未播未来集数阻止归档。
+            covered = targets & bundle_episodes
+            if not covered:
+                continue
             if self._submit_seedhub_offline(
-                resource, subscribe, mediainfo, save_dir, "电视剧", season, targets, subscribe_filter
+                resource, subscribe, mediainfo, save_dir, "电视剧", season, covered, subscribe_filter
             ):
                 return True
         return False
@@ -360,12 +365,13 @@ class SyncHandler:
             # best_version=1 表示开启洗版（非严格模式）
             is_best_version = bool(subscribe.best_version)
 
+            # 历史仅用于洗版的质量参考，不能代替 115 目标目录实际文件。
+            # 用户删除夸克文件、重置订阅或迁移至 115 后，旧历史必须不阻止重新搜集。
             if movie_history_score >= 0:
-                if not is_best_version or movie_perfect_match:
-                    logger.info(f"电影 {subscribe.name} 已在历史记录中(洗版:{is_best_version}, 完美匹配:{movie_perfect_match})，跳过")
-                    return transferred_count
-                else:
-                    logger.info(f"电影 {subscribe.name} 洗版中，历史分数 {movie_history_score}，尝试寻找更优资源")
+                logger.info(
+                    f"电影 {subscribe.name} 存在历史记录（洗版:{is_best_version}）；"
+                    "将以 115 目标目录实际文件为准继续核验"
+                )
 
             # 生成元数据
             meta = MetaInfo(subscribe.name)
@@ -388,6 +394,23 @@ class SyncHandler:
             offline_save_dir = f"{self._movie_save_path}/{mediainfo.title} ({mediainfo.year})" if mediainfo.year else f"{self._movie_save_path}/{mediainfo.title}"
             if self._reconcile_offline_movie(subscribe, mediainfo, offline_save_dir):
                 return transferred_count
+            try:
+                existing_movie = FileMatcher.match_movie_file(
+                    self._p115_manager.list_files(offline_save_dir), mediainfo.title
+                )
+            except Exception as exc:
+                logger.warning(f"检查 115 电影目标目录失败：{type(exc).__name__}")
+                existing_movie = None
+            if existing_movie:
+                logger.info(f"115 目标目录已确认电影文件，跳过重复转存：{mediainfo.title}")
+                if not self._dry_run:
+                    self._subscribe_handler.check_and_finish_subscribe(
+                        subscribe, mediainfo, success_episodes=[1]
+                    )
+                return transferred_count
+            # 目录未确认文件时，旧历史不应抑制重新搜集或阻止相同质量资源回补。
+            movie_history_score = -1
+            movie_perfect_match = False
 
             # 搜索网盘资源
             p115_results = self._search_handler.search_resources(
@@ -694,25 +717,22 @@ class SyncHandler:
             # best_version=1 表示开启洗版
             is_best_version = bool(subscribe.best_version)
 
-            # 从历史记录中排除已成功转存的集数
+            # 历史不代表 115 目标目录文件存在：夸克迁移、人工删除或订阅重置后，
+            # 必须允许 115 重新搜集；质量评分仅在实际 115 文件已确认时才有意义。
             transferred_episodes = set()
             episode_history_scores: Dict[int, int] = {}
             for h in history:
                 if (h.get("title") == mediainfo.title
                         and h.get("season") == season
-                        and h.get("status") == "成功"):
+                        and h.get("status") == "成功"
+                        and is_best_version):
                     ep = h.get("episode")
                     score = h.get("filter_score", 0)
                     perfect = h.get("perfect_match", False)
-
-                    if not is_best_version:
-                        transferred_episodes.add(ep)
-                    else:
-                        if perfect:
-                            transferred_episodes.add(ep)
-                        else:
-                            if ep not in episode_history_scores or score > episode_history_scores[ep]:
-                                episode_history_scores[ep] = score
+                    if not perfect and ep not in episode_history_scores:
+                        episode_history_scores[ep] = score
+                    elif not perfect and score > episode_history_scores[ep]:
+                        episode_history_scores[ep] = score
 
             # 115 离线任务完成后仍须以目标目录真实文件为准，再走既有订阅闭环。
             show_folder = f"{mediainfo.title} ({mediainfo.year})" if mediainfo.year else mediainfo.title

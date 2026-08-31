@@ -76,11 +76,15 @@ class SearchHandler:
         seen = set()
         output: List[Dict[str, Any]] = []
         for keyword in self._build_keywords(mediainfo, media_type, season):
+            if getattr(self._seedhub_client, "blocked", False):
+                break
             logger.info(f"使用 SeedHub 公开频道搜索磁力资源：{mediainfo.title}，关键词：{keyword!r}")
             pages = self._telegram_client.search_seedhub_movie_pages(
                 keyword, required_title=mediainfo.title, channel=self._seedhub_channel
             )
             for page in pages:
+                if getattr(self._seedhub_client, "blocked", False):
+                    break
                 for resource in self._seedhub_client.list_resources(page.get("url") or ""):
                     key = str(resource.get("seed_id") or "")
                     if not key or key in seen:
