@@ -61,20 +61,19 @@ p115client==0.0.9.6.5.1
 ```text
 插件 ID：P115TGSub
 目录：plugins.v2/p115tgsub/
-版本：2.0.0
+版本：2.3.2
 ```
 
 面向“资源直接发布在 Telegram 公开频道”的订阅追更场景。插件自行访问 Telegram 公开搜索页，不调用 CloudSaver API，也不保存 CloudSaver 的地址、JWT 或账号密码。
 
-### v2.0 支持范围
+### v2.3 支持范围
 
 ```text
 MoviePilot 订阅
 → Telegram 公开频道搜索页
-→ 提取 115 与夸克（pan.quark.cn）分享链接
-→ 校验分享目录，核对影片/季集/缺集
-→ 115 优先转存；无 115 候选时转存夸克（复用 QuarkDisk Cookie）
-→ 目标目录二次确认
+→ 115 分享、正文直链 ED2K/Magnet 或 SeedHub 公开磁力资源
+→ 定向保存至 115 电影/电视剧季目录，目标文件二次确认
+→ 无可用 115 资源时转存夸克（复用 QuarkDisk Cookie）
 → 更新 MoviePilot 订阅状态
 → 夸克转存成功联动 SmartStrm 增量生成 STRM
 ```
