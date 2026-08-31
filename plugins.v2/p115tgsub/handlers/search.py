@@ -9,9 +9,13 @@ from app.schemas.types import MediaType
 class SearchHandler:
     """使用 Telegram 公开频道搜索 115 与夸克分享链接。"""
 
-    def __init__(self, telegram_client, telegram_enabled: bool = False) -> None:
+    def __init__(self, telegram_client, telegram_enabled: bool = False, seedhub_client=None,
+                 seedhub_enabled: bool = False, seedhub_channel: str = "seedhub_pro") -> None:
         self._telegram_client = telegram_client
         self._telegram_enabled = bool(telegram_enabled)
+        self._seedhub_client = seedhub_client
+        self._seedhub_enabled = bool(seedhub_enabled)
+        self._seedhub_channel = str(seedhub_channel or "seedhub_pro").strip()
 
     def get_enabled_sources(self) -> List[str]:
         if self._telegram_enabled and self._telegram_client and self._telegram_client.channels:
@@ -58,6 +62,35 @@ class SearchHandler:
             if results:
                 logger.info(f"Telegram 关键词 {keyword!r} 找到 {len(results)} 个 ED2K/磁力候选")
                 return results
+        return []
+
+    def search_seedhub_resources(
+        self,
+        mediainfo: MediaInfo,
+        media_type: MediaType,
+        season: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        """经指定 SeedHub Telegram 公开频道定位电影页，再读取公开磁力候选。"""
+        if not self._seedhub_enabled or not self._seedhub_client or not self._telegram_enabled or not self._telegram_client:
+            return []
+        seen = set()
+        output: List[Dict[str, Any]] = []
+        for keyword in self._build_keywords(mediainfo, media_type, season):
+            logger.info(f"使用 SeedHub 公开频道搜索磁力资源：{mediainfo.title}，关键词：{keyword!r}")
+            pages = self._telegram_client.search_seedhub_movie_pages(
+                keyword, required_title=mediainfo.title, channel=self._seedhub_channel
+            )
+            for page in pages:
+                for resource in self._seedhub_client.list_resources(page.get("url") or ""):
+                    key = str(resource.get("seed_id") or "")
+                    if not key or key in seen:
+                        continue
+                    seen.add(key)
+                    resource["telegram_channel"] = page.get("channel") or ""
+                    resource["telegram_message_id"] = page.get("message_id") or ""
+                    output.append(resource)
+            if output:
+                return output
         return []
 
     def search_single_source(

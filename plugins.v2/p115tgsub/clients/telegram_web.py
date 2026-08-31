@@ -134,6 +134,7 @@ class TelegramWebClient:
     _QUARK_HOSTS = {"pan.quark.cn"}
     _URL_RE = re.compile(r"https?://[^\s<>\"'，。；;]+", re.IGNORECASE)
     _OFFLINE_RE = re.compile(r"(?:ed2k://\|file\|[^\s<>\"']+?\|/|magnet:\?[^\s<>\"']+)", re.IGNORECASE)
+    _SEEDHUB_MOVIE_RE = re.compile(r"^https://sidhub\.cc/movies/\d+/?$", re.IGNORECASE)
     _TRAILING_URL_CHARS = ".,，。;；:：!！?？)]}〉》\"'"
 
     def __init__(
@@ -257,6 +258,18 @@ class TelegramWebClient:
             key = url.casefold()
             if key and key not in seen:
                 seen.add(key)
+                output.append(url)
+        return output
+
+    @classmethod
+    def _extract_seedhub_movie_urls(cls, text: str, links: Iterable[str] = ()) -> List[str]:
+        """仅提取 SeedHub 公开电影页，不处理搜索页、link_start 或其他第三方链接。"""
+        output: List[str] = []
+        seen = set()
+        for raw in list(links or []) + cls._URL_RE.findall(html.unescape(str(text or ""))):
+            url = cls._clean_url(raw)
+            if cls._SEEDHUB_MOVIE_RE.fullmatch(url) and url.casefold() not in seen:
+                seen.add(url.casefold())
                 output.append(url)
         return output
 
@@ -449,6 +462,28 @@ class TelegramWebClient:
                         "kind": "ed2k" if url.casefold().startswith("ed2k:") else "magnet",
                     })
         logger.info(f"Telegram 公开频道搜索“{keyword}”完成，找到 {len(results)} 个 ED2K/磁力候选")
+        return results
+
+    def search_seedhub_movie_pages(self, keyword: str, required_title: str = "", channel: str = "seedhub_pro") -> List[Dict[str, str]]:
+        """仅从指定公开频道提取 SeedHub /movies/<id>/ 索引页。"""
+        normalized = self.normalize_channels([channel])
+        if not normalized:
+            return []
+        results: List[Dict[str, str]] = []
+        seen = set()
+        for message in self.search_messages(normalized[0], keyword, required_title=required_title):
+            for movie_url in self._extract_seedhub_movie_urls(message.text, message.links):
+                if movie_url.casefold() in seen:
+                    continue
+                seen.add(movie_url.casefold())
+                self._search_stats["raw_candidates"] += 1
+                results.append({
+                    "url": movie_url, "title": message.text or keyword, "text": message.text or "",
+                    "update_time": message.published_at, "channel": message.channel,
+                    "message_id": message.message_id, "message_url": message.message_url,
+                    "kind": "seedhub_movie",
+                })
+        logger.info(f"Telegram 公开频道 {normalized[0]} 搜索“{keyword}”完成，找到 {len(results)} 个 SeedHub 页面")
         return results
 
     def _search_links(self, keyword: str, required_title: str, kind: str) -> List[Dict[str, str]]:

@@ -48,7 +48,15 @@ package = types.ModuleType(package_name)
 package.__path__ = []
 sys.modules[package_name] = package
 utils = types.ModuleType(f"{package_name}.utils")
-utils.FileMatcher = type("FileMatcher", (), {})
+class _FileMatcher:
+    @staticmethod
+    def _contains_other_season(file_name, target_season):
+        import re
+        match = re.search(r"[Ss](\d{1,2})(?:[Ee]|\.)", str(file_name))
+        return bool(match and int(match.group(1)) != int(target_season))
+
+
+utils.FileMatcher = _FileMatcher
 utils.SubscribeFilter = type("SubscribeFilter", (), {})
 utils.resource_year_matches = lambda expected, *values: True
 utils.sanitize_resource_text = lambda value, limit=160: str(value or "")[:limit]
@@ -123,6 +131,13 @@ def test_explicit_wrong_year_is_rejected_by_helper_contract():
     assert module.resource_year_matches(2026, "测试影片 更新于 2025-08-01", title="测试影片")
 
 
+def test_seedhub_episode_range_requires_clear_complete_season():
+    assert SyncHandler._seedhub_episode_range("测试剧[全36集].S01.2026.2160p", 1) == set(range(1, 37))
+    assert SyncHandler._seedhub_episode_range("Test.Show.2026.EP01-12.1080p", 1) == set(range(1, 13))
+    assert SyncHandler._seedhub_episode_range("Test.Show.S02.EP01-12", 1) == set()
+    assert SyncHandler._seedhub_episode_range("Test.Show.S01E07.1080p", 1) == set()
+
+
 if __name__ == "__main__":
     test_single_character_title_is_not_removed_by_normalization()
     test_unrelated_single_character_title_is_rejected()
@@ -130,4 +145,5 @@ if __name__ == "__main__":
     test_zero_start_episode_falls_back_to_episode_one()
     test_history_sensitive_url_migration_helper_contract()
     test_explicit_wrong_year_is_rejected_by_helper_contract()
+    test_seedhub_episode_range_requires_clear_complete_season()
     print("sync handler tests: OK")

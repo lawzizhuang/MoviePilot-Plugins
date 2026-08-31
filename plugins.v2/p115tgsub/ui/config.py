@@ -16,7 +16,7 @@ class UIConfig:
                         "component": "VCol", "props": {"cols": 12}, "content": [{
                             "component": "VAlert", "props": {
                                 "type": "info", "variant": "tonal",
-                                "text": "v2.0：115 优先、夸克兜底的双网盘订阅追更。Telegram 公开频道先按订阅标题筛选候选；115 有可用资源走 115 链路，否则尝试夸克分享校验与转存；夸克转存成功后由 SmartStrm 在本地增量生成 STRM。"
+                                "text": "v2.3：115 优先、夸克兜底的双网盘订阅追更。Telegram 公开频道先按订阅标题筛选候选；115 分享、Telegram 正文直链和 SeedHub 公开磁力均可进入定向 115 离线下载，均无可用资源时才尝试夸克转存；夸克转存成功后由 SmartStrm 在本地增量生成 STRM。"
                             }
                         }]
                     }]
@@ -74,10 +74,30 @@ class UIConfig:
                         "component": "VCol", "props": {"cols": 12}, "content": [{
                             "component": "VAlert", "props": {
                                 "type": "info", "variant": "tonal",
-                                "text": "115 离线下载：仅处理 Telegram 公开消息正文直接包含的 ED2K 或磁力链接，并显式保存至上方电视剧/电影转存目录；提交任务不算成功，只有目标目录确认出现媒体文件才更新订阅。SeedHub 等第三方资源页暂不抓取。"
+                                "text": "115 离线下载：仅处理 Telegram 公开消息正文直接包含的 ED2K 或磁力链接，并显式保存至上方电视剧/电影转存目录；提交任务不算成功，只有目标目录确认出现媒体文件才更新订阅。"
                             }
                         }]
                     }]
+                },
+                {
+                    "component": "VRow",
+                    "content": [{
+                        "component": "VCol", "props": {"cols": 12}, "content": [{
+                            "component": "VAlert", "props": {
+                                "type": "info", "variant": "tonal",
+                                "text": "SeedHub 公开磁力：通过指定 Telegram 公开频道定位 sidhub.cc 电影页，只读取公开磁力列表并提交至上方 115 目标目录。完整季磁力只创建一个云下载任务；不登录、不使用 Cookie、不抓取其他网盘标签。"
+                            }
+                        }]
+                    }]
+                },
+                {
+                    "component": "VRow",
+                    "content": [
+                        {"component": "VCol", "props": {"cols": 12, "md": 3}, "content": [{"component": "VSwitch", "props": {"model": "seedhub_enabled", "label": "启用 SeedHub 公开磁力资源", "hint": "需同时启用上方 115 ED2K / 磁力离线下载；仅在 Telegram 直链无可用候选时尝试。"}}]},
+                        {"component": "VCol", "props": {"cols": 12, "md": 3}, "content": [{"component": "VTextField", "props": {"model": "seedhub_channel", "label": "SeedHub Telegram 公开频道", "placeholder": "seedhub_pro"}}]},
+                        {"component": "VCol", "props": {"cols": 12, "md": 3}, "content": [{"component": "VTextField", "props": {"model": "seedhub_timeout", "label": "SeedHub 请求超时（秒）", "type": "number", "placeholder": "20"}}]},
+                        {"component": "VCol", "props": {"cols": 12, "md": 3}, "content": [{"component": "VTextField", "props": {"model": "seedhub_max_candidates", "label": "单次最多检查磁力候选数", "type": "number", "placeholder": "5"}}]},
+                    ],
                 },
                 {
                     "component": "VRow",
@@ -186,6 +206,7 @@ class UIConfig:
             "telegram_timeout": 20, "telegram_max_results": 10, "telegram_max_telegraph_pages": 3,
             "max_transfer_per_sync": 20, "batch_size": 10, "skip_other_season_dirs": True, "dry_run": True,
             "offline_enabled": False, "offline_max_per_sync": 5, "offline_max_wait_hours": 24,
+            "seedhub_enabled": False, "seedhub_channel": "seedhub_pro", "seedhub_timeout": 20, "seedhub_max_candidates": 5,
             "quark_enabled": False, "quark_timeout": 30, "quark_risk_cooldown": 1800,
             "quark_save_path": "/夸克接收/MoviePilot-TG/TV", "quark_movie_save_path": "/夸克接收/MoviePilot-TG/Movie",
             "strm_enabled": False, "smartstrm_webhook_url": "", "smartstrm_task": "tv,movie",

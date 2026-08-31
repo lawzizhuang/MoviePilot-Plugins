@@ -56,11 +56,12 @@
   "release": true,
   "description": "读取 MoviePilot 订阅，直接搜索 Telegram 公开频道中的 115/夸克分享资源并补齐缺失内容；夸克转存后触发 SmartStrm 本地增量生成 STRM。",
   "labels": "订阅,115网盘,Telegram,追更",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "icon": "https://raw.githubusercontent.com/jxxghp/MoviePilot-Plugins/main/icons/cloud.png",
   "author": "lawzizhuang",
   "level": 1,
   "history": {
+   "v2.3.0": "新增：经 seedhub_pro 公开 Telegram 消息定位 SeedHub 公开磁力页面，解码同源公开磁力并提交至指定 115 目录；完整季磁力只创建一个离线任务，目标文件确认后再更新订阅。",
    "v2.2.0": "新增：Telegram 公开消息正文直链 ED2K/磁力资源提交 115 云下载，显式保存至插件配置的电影/电视剧目录；离线待确认队列、目标文件二次确认及夸克重复兜底抑制。SeedHub 等第三方资源页暂不抓取。",
    "v2.1.3": "修复：夸克分享目录分页遇到空页时立即停止，避免服务端异常总数导致递归目录读取无限翻页并阻塞同步。",
    "v2.1.2": "修复：补充夸克分享校验/目录读取阶段与耗时日志、候选公开来源定位；分享校验接口失败不重试，避免单个候选长时间阻塞整轮追更。",

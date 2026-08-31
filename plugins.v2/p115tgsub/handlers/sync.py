@@ -200,6 +200,92 @@ class SyncHandler:
         return self._search_handler.search_offline_resources(mediainfo, media_type, season)
 
     @staticmethod
+    def _seedhub_episode_range(title: str, season: int) -> Set[int]:
+        """从 SeedHub 发布名识别清晰的单季集数范围；模糊条目一律不自动提交。"""
+        text = str(title or "")
+        if FileMatcher._contains_other_season(text, season):
+            return set()
+        match = re.search(r"(?:EP|E)\s*(\d{1,3})\s*[-~～至到]\s*(\d{1,3})(?!\d)", text, re.IGNORECASE)
+        if match:
+            start, end = int(match.group(1)), int(match.group(2))
+            return set(range(start, end + 1)) if 1 <= start <= end <= 999 else set()
+        match = re.search(r"(?:全|\[全)\s*(\d{1,3})\s*集", text)
+        if match:
+            return set(range(1, int(match.group(1)) + 1))
+        return set()
+
+    def _submit_seedhub_offline(self, resource: Dict[str, Any], subscribe, mediainfo: MediaInfo, save_dir: str,
+                                media_type: str, season: int = 0, episodes: Optional[Set[int]] = None,
+                                subscribe_filter: Optional[SubscribeFilter] = None) -> bool:
+        """提交一个 SeedHub 单电影或完整季磁力；一个完整季包只创建一个 115 任务。"""
+        if not self._offline_enabled or not self._offline_queue:
+            return False
+        title = str(resource.get("title") or "")
+        movie_id, seed_id = str(resource.get("movie_id") or ""), str(resource.get("seed_id") or "")
+        source_name = f"SeedHub/{seed_id}" if seed_id else "SeedHub"
+        if not movie_id.isdigit() or not seed_id.isdigit() or not self._resource_title_matches(mediainfo, title):
+            return False
+        if not resource_year_matches(mediainfo.year, title, title=mediainfo.title):
+            return False
+        if subscribe_filter and subscribe_filter.has_filters() and not subscribe_filter.match(title)[0]:
+            return False
+        targets: Set[int] = set()
+        if media_type == "电视剧":
+            bundle_episodes = self._seedhub_episode_range(title, season)
+            targets = set(episodes or set())
+            if not targets or not targets.issubset(bundle_episodes):
+                return False
+            pending = self._offline_queue.pending_episodes(subscribe.id, season)
+            targets -= pending
+            if not targets:
+                return False
+        elif self._offline_queue.pending_movie(subscribe.id):
+            return False
+        if self._offline_submitted_this_run >= self._offline_max_per_sync:
+            return False
+        seedhub_client = getattr(self._search_handler, "_seedhub_client", None)
+        magnet = seedhub_client.resolve_magnet(resource) if seedhub_client else ""
+        if not magnet:
+            logger.warning(f"{source_name} 未取得有效公开磁力，跳过")
+            return False
+        if self._dry_run:
+            target_cid = self._p115_manager.get_pid_by_path(save_dir, mkdir=False)
+            if target_cid == -1:
+                logger.warning(f"测试模式：SeedHub 目标目录尚不存在，正式模式会按插件路径创建：{save_dir}")
+            else:
+                logger.info(f"测试模式：SeedHub 目标目录可用：{save_dir}")
+            logger.info(f"测试模式：已验证 {source_name} 公开磁力候选，不提交 115 云下载")
+            return True
+        if not self._p115_manager.submit_offline_task(magnet, save_dir):
+            return False
+        queued = self._offline_queue.enqueue_many(
+            subscribe_id=subscribe.id, title=mediainfo.title, year=mediainfo.year, media_type=media_type,
+            savepath=save_dir, resource_key=self._p115_manager.offline_resource_key(magnet), file_name=title,
+            season=season, episodes=targets,
+        )
+        if queued:
+            self._offline_submitted_this_run += 1
+            target_desc = f" S{season:02d} {len(targets)} 集" if targets else ""
+            logger.info(f"{source_name} 已进入 115 离线下载待确认队列：{mediainfo.title}{target_desc}")
+        return queued
+
+    def _submit_seedhub_movie(self, subscribe, mediainfo: MediaInfo, save_dir: str, subscribe_filter: SubscribeFilter) -> bool:
+        for resource in self._search_handler.search_seedhub_resources(mediainfo, MediaType.MOVIE):
+            if self._submit_seedhub_offline(resource, subscribe, mediainfo, save_dir, "电影", subscribe_filter=subscribe_filter):
+                return True
+        return False
+
+    def _submit_seedhub_tv(self, subscribe, mediainfo: MediaInfo, save_dir: str, season: int,
+                           episodes: List[int], subscribe_filter: SubscribeFilter) -> bool:
+        targets = set(episodes)
+        for resource in self._search_handler.search_seedhub_resources(mediainfo, MediaType.TV, season):
+            if self._submit_seedhub_offline(
+                resource, subscribe, mediainfo, save_dir, "电视剧", season, targets, subscribe_filter
+            ):
+                return True
+        return False
+
+    @staticmethod
     def _fallback_missing_episodes_from_subscribe(subscribe) -> List[int]:
         """当媒体库未返回缺集明细时，使用 MoviePilot 订阅声明的季集范围继续追更。"""
         try:
@@ -468,10 +554,14 @@ class SyncHandler:
                     continue
 
             if not movie_transferred and not self.offline_pending(subscribe.id, media_type="电影"):
+                offline_submitted = False
                 for resource in self._search_offline_resources(mediainfo, MediaType.MOVIE):
                     if self._submit_offline(resource, subscribe, mediainfo, offline_save_dir, "电影"):
                         logger.info(f"电影 {mediainfo.title} 已提交 115 离线下载，等待目标目录文件确认")
+                        offline_submitted = True
                         break
+                if not offline_submitted:
+                    self._submit_seedhub_movie(subscribe, mediainfo, offline_save_dir, subscribe_filter)
 
         except Exception as e:
             logger.error(f"处理电影订阅 {subscribe.name} 出错：{str(e)}")
@@ -761,6 +851,10 @@ class SyncHandler:
                                 break
                     if submitted:
                         logger.info(f"[{source.upper()}] 已提交 {submitted} 个 115 离线下载任务，等待目标目录文件确认")
+                    else:
+                        self._submit_seedhub_tv(
+                            subscribe, mediainfo, save_dir, season, missing_episodes, subscribe_filter
+                        )
                     remaining_sources = enabled_sources[source_index + 1:]
                     if remaining_sources:
                         logger.info(f"[{source.upper()}] 未找到资源，将尝试下一个源: {remaining_sources[0].upper()}")
@@ -987,6 +1081,10 @@ class SyncHandler:
                                 break
                     if submitted:
                         logger.info(f"[{source.upper()}] 已提交 {submitted} 个 115 离线下载任务，等待目标目录文件确认")
+                    elif self._submit_seedhub_tv(
+                        subscribe, mediainfo, save_dir, season, missing_episodes, subscribe_filter
+                    ):
+                        logger.info(f"[{source.upper()}] 已提交 SeedHub 115 离线下载任务，等待目标目录文件确认")
 
                 if missing_episodes:
                     remaining_sources = enabled_sources[source_index + 1:]

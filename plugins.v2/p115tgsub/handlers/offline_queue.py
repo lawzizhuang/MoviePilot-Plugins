@@ -74,6 +74,35 @@ class OfflineQueue:
             for item in self._load()
         )
 
+    def enqueue_many(self, *, subscribe_id: Any, title: str, year: Any, media_type: str, savepath: str,
+                     resource_key: str, file_name: str, season: int = 0, episodes: Iterable[int] = (),
+                     task_id: str = "") -> bool:
+        """为一个离线任务登记多个预期集数；资源原文仍只以哈希去重。"""
+        targets = sorted({int(value) for value in episodes if int(value or 0) > 0}) or [0]
+        items = self._load()
+        if any(item.get("status") == "pending" and str(item.get("resource_key")) == str(resource_key) for item in items):
+            return False
+        existing = {
+            int(item.get("episode") or 0) for item in items
+            if item.get("status") == "pending" and str(item.get("subscribe_id")) == str(subscribe_id)
+            and int(item.get("season") or 0) == int(season or 0) and item.get("media_type") == media_type
+        }
+        targets = [episode for episode in targets if episode not in existing]
+        if not targets:
+            return False
+        now = self._now_text()
+        task_group = uuid.uuid4().hex[:12]
+        for episode in targets:
+            items.append({
+                "id": uuid.uuid4().hex[:12], "task_group": task_group, "subscribe_id": str(subscribe_id),
+                "title": str(title or ""), "year": str(year or ""), "media_type": str(media_type or ""),
+                "savepath": str(savepath or ""), "resource_key": str(resource_key or ""),
+                "file_name": str(file_name or ""), "season": int(season or 0), "episode": episode,
+                "task_id": str(task_id or "")[:100], "status": "pending", "created_at": now, "updated_at": now,
+            })
+        self._save(items)
+        return True
+
     def enqueue(self, *, subscribe_id: Any, title: str, year: Any, media_type: str, savepath: str,
                 resource_key: str, file_name: str, season: int = 0, episode: int = 0, task_id: str = "") -> bool:
         items = self._load()

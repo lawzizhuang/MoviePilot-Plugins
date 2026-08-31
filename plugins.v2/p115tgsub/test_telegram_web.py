@@ -186,6 +186,12 @@ def test_quark_duplicate_keeps_access_code_variants_and_counts_merge():
     assert client.get_search_stats() == {"raw_candidates": 3, "duplicates_merged": 1}
 
 
+def test_seedhub_movie_page_is_extracted_from_designated_message():
+    movie_url = "https://sidhub.cc/movies/127534/"
+    assert TelegramWebClient._extract_seedhub_movie_urls("详情：" + movie_url) == [movie_url]
+    assert TelegramWebClient._extract_seedhub_movie_urls("https://sidhub.cc/link_start/?seed_id=1") == []
+
+
 def test_telegraph_quark_link_and_access_code_are_extracted():
     search_url = "https://t.me/s/QukanMovie?q=%E4%B8%89%E4%BD%93"
     telegraph_url = "https://telegra.ph/quark-resource"
@@ -233,6 +239,7 @@ if __name__ == "__main__":
     test_quark_links_are_extracted_and_password_in_text()
     test_quark_url_with_query_password()
     test_direct_ed2k_and_magnet_are_extracted_from_message_body()
+    test_seedhub_movie_page_is_extracted_from_designated_message()
     test_quark_duplicate_keeps_access_code_variants_and_counts_merge()
     test_telegraph_quark_link_and_access_code_are_extracted()
     test_single_character_title_can_follow_telegraph()
