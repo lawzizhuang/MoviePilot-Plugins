@@ -29,7 +29,7 @@ class P115TGSub(_PluginBase):
     plugin_name = "115 TG订阅追更"
     plugin_desc = "读取 MoviePilot 订阅，直接搜索 Telegram 公开频道中的 115/夸克分享资源并补齐缺失内容。"
     plugin_icon = "https://raw.githubusercontent.com/jxxghp/MoviePilot-Plugins/main/icons/cloud.png"
-    plugin_version = "2.3.0"
+    plugin_version = "2.3.1"
     plugin_author = "lawzizhuang"
     author_url = "https://github.com/lawzizhuang/MoviePilot-Plugins"
     plugin_config_prefix = "p115tgsub_"
@@ -69,6 +69,7 @@ class P115TGSub(_PluginBase):
     _seedhub_channel = "seedhub_pro"
     _seedhub_timeout = 20
     _seedhub_max_candidates = 5
+    _seedhub_use_proxy = False
     _quark_client = None
     _seedhub_client = None
     _strm_client = None
@@ -164,6 +165,8 @@ class P115TGSub(_PluginBase):
         self._seedhub_channel = str(config.get("seedhub_channel", "seedhub_pro") or "seedhub_pro").strip()
         self._seedhub_timeout = self._int_config(config.get("seedhub_timeout", 20), 20, 5, 60)
         self._seedhub_max_candidates = self._int_config(config.get("seedhub_max_candidates", 5), 5, 1, 20)
+        # SeedHub 公开页通常无需 Telegram 代理；默认直连可避免代理出口触发站点访问限制。
+        self._seedhub_use_proxy = bool(config.get("seedhub_use_proxy", False))
         try:
             self._init_clients()
             self._init_handlers()
@@ -239,7 +242,9 @@ class P115TGSub(_PluginBase):
             max_telegraph_pages=self._telegram_max_telegraph_pages,
         )
         self._seedhub_client = SeedHubClient(
-            proxy=proxy, timeout=self._seedhub_timeout, max_candidates=self._seedhub_max_candidates
+            proxy=proxy if self._seedhub_use_proxy else None,
+            timeout=self._seedhub_timeout,
+            max_candidates=self._seedhub_max_candidates,
         ) if self._seedhub_enabled else None
         if self._telegram_enabled and not self._telegram_client.channels:
             logger.warning("Telegram 搜索已启用但未配置有效公开频道")
@@ -392,6 +397,7 @@ class P115TGSub(_PluginBase):
             "offline_max_wait_hours": self._offline_max_wait_hours,
             "seedhub_enabled": self._seedhub_enabled, "seedhub_channel": self._seedhub_channel,
             "seedhub_timeout": self._seedhub_timeout, "seedhub_max_candidates": self._seedhub_max_candidates,
+            "seedhub_use_proxy": self._seedhub_use_proxy,
         }
 
     def stop_service(self) -> None:

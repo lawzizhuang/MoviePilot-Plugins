@@ -97,6 +97,7 @@ class UIConfig:
                         {"component": "VCol", "props": {"cols": 12, "md": 3}, "content": [{"component": "VTextField", "props": {"model": "seedhub_channel", "label": "SeedHub Telegram 公开频道", "placeholder": "seedhub_pro"}}]},
                         {"component": "VCol", "props": {"cols": 12, "md": 3}, "content": [{"component": "VTextField", "props": {"model": "seedhub_timeout", "label": "SeedHub 请求超时（秒）", "type": "number", "placeholder": "20"}}]},
                         {"component": "VCol", "props": {"cols": 12, "md": 3}, "content": [{"component": "VTextField", "props": {"model": "seedhub_max_candidates", "label": "单次最多检查磁力候选数", "type": "number", "placeholder": "5"}}]},
+                        {"component": "VCol", "props": {"cols": 12, "md": 12}, "content": [{"component": "VSwitch", "props": {"model": "seedhub_use_proxy", "label": "SeedHub 使用 MoviePilot HTTP 代理", "hint": "默认关闭并直连；仅在容器直连 SeedHub 失败时启用。Telegram 公开搜索仍使用 MoviePilot HTTP 代理。", "persistent-hint": True}}]},
                     ],
                 },
                 {
@@ -207,6 +208,7 @@ class UIConfig:
             "max_transfer_per_sync": 20, "batch_size": 10, "skip_other_season_dirs": True, "dry_run": True,
             "offline_enabled": False, "offline_max_per_sync": 5, "offline_max_wait_hours": 24,
             "seedhub_enabled": False, "seedhub_channel": "seedhub_pro", "seedhub_timeout": 20, "seedhub_max_candidates": 5,
+            "seedhub_use_proxy": False,
             "quark_enabled": False, "quark_timeout": 30, "quark_risk_cooldown": 1800,
             "quark_save_path": "/夸克接收/MoviePilot-TG/TV", "quark_movie_save_path": "/夸克接收/MoviePilot-TG/Movie",
             "strm_enabled": False, "smartstrm_webhook_url": "", "smartstrm_task": "tv,movie",

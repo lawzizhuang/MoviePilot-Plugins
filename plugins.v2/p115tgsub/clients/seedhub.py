@@ -100,7 +100,12 @@ class SeedHubClient:
         self.max_candidates = max(1, min(int(max_candidates or 5), 20))
         self._proxies = proxy if isinstance(proxy, dict) else ({"http": proxy, "https": proxy} if proxy else None)
         self._session = requests.Session()
-        self._session.headers.update({"User-Agent": self.USER_AGENT, "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8"})
+        self._session.headers.update({
+            "User-Agent": self.USER_AGENT,
+            "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+            "Referer": f"{self.BASE_URL}/",
+        })
         self._page_cache: Dict[str, str] = {}
 
     @classmethod

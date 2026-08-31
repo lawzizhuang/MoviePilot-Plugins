@@ -2,6 +2,10 @@
 
 MoviePilot V2 插件：读取 MoviePilot 待处理订阅（状态 `N`、`R`），直接检索 Telegram 公开频道中的 **115 与夸克** 分享资源，校验分享目录与缺集后转存缺失的电影和剧集；夸克转存成功后联动 SmartStrm 在本地增量生成 STRM。
 
+## v2.3.1
+
+- **SeedHub 直连优先**：SeedHub 公开页面默认不复用 Telegram HTTP 代理，降低代理出口触发访问限制的概率；容器直连失败时可在配置页按需开启代理。
+
 ## v2.3 能力
 
 - **SeedHub 公开磁力**：通过指定 Telegram 公开频道（默认 `seedhub_pro`）定位 `sidhub.cc/movies/<ID>/`，读取公开磁力列表并解码同源 `link_start` 页的 Magnet，提交到既有 115 电影或电视剧季目录。
