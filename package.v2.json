@@ -56,11 +56,12 @@
   "release": true,
   "description": "读取 MoviePilot 订阅，直接搜索 Telegram 公开频道中的 115/夸克分享资源并补齐缺失内容；夸克转存后触发 SmartStrm 本地增量生成 STRM。",
   "labels": "订阅,115网盘,Telegram,追更",
-  "version": "2.3.2",
+  "version": "2.3.3",
   "icon": "https://raw.githubusercontent.com/jxxghp/MoviePilot-Plugins/main/icons/cloud.png",
   "author": "lawzizhuang",
   "level": 1,
   "history": {
+   "v2.3.3": "修复：以媒体库实际已入库集数回写 MoviePilot 订阅状态，并从回退补档范围中剔除，避免重复追更；补充 Telegram 频道加载与每次搜索请求数量日志，便于核验频道配置是否完整生效。",
    "v2.3.2": "修复：旧夸克成功历史不再被当作 115 目标目录文件；用户删除夸克资源并重置订阅后可重新回补至 115。SeedHub 首次返回 403/429 时本轮熔断，避免连续请求触发限流。",
    "v2.3.1": "修复：SeedHub 公开页面默认直连，不再复用 Telegram 的 HTTP 代理；新增按需启用代理的开关，降低代理出口触发访问限制的概率。",
    "v2.3.0": "新增：经 seedhub_pro 公开 Telegram 消息定位 SeedHub 公开磁力页面，解码同源公开磁力并提交至指定 115 目录；完整季磁力只创建一个离线任务，目标文件确认后再更新订阅。",

@@ -444,7 +444,9 @@ class TelegramWebClient:
             return []
         results: List[Dict[str, str]] = []
         seen = set()
+        requested_channels = 0
         for channel in self.channels:
+            requested_channels += 1
             messages = self.search_messages(channel, keyword, required_title=required_title)
             if not messages:
                 continue
@@ -461,7 +463,10 @@ class TelegramWebClient:
                         "message_id": message.message_id, "message_url": message.message_url,
                         "kind": "ed2k" if url.casefold().startswith("ed2k:") else "magnet",
                     })
-        logger.info(f"Telegram 公开频道搜索“{keyword}”完成，找到 {len(results)} 个 ED2K/磁力候选")
+        logger.info(
+            f"Telegram 公开频道搜索“{keyword}”完成，请求 {requested_channels}/{len(self.channels)} 个频道，"
+            f"找到 {len(results)} 个 ED2K/磁力候选"
+        )
         return results
 
     def search_seedhub_movie_pages(self, keyword: str, required_title: str = "", channel: str = "seedhub_pro") -> List[Dict[str, str]]:
@@ -494,10 +499,12 @@ class TelegramWebClient:
 
         extractor = self._extract_urls if kind == "115" else self._extract_quark_urls
         results: List[Dict[str, str]] = []
+        requested_channels = 0
         # 115 仍按完整链接去重；夸克按“分享 ID + 访问码”去重，避免无访问码
         # 的搬运消息覆盖后续携带正确访问码的同一分享。
         seen_keys = set()
         for channel in self.channels:
+            requested_channels += 1
             messages = self.search_messages(channel, keyword, required_title=required_title)
             if not messages:
                 logger.info(f"Telegram 频道 {channel} 未找到关键词“{keyword}”的消息")
@@ -548,5 +555,8 @@ class TelegramWebClient:
                         "text": candidate_text,
                     })
 
-        logger.info(f"Telegram 公开频道搜索“{keyword}”完成，找到 {len(results)} 个 {kind} 分享链接")
+        logger.info(
+            f"Telegram 公开频道搜索“{keyword}”完成，请求 {requested_channels}/{len(self.channels)} 个频道，"
+            f"找到 {len(results)} 个 {kind} 分享链接"
+        )
         return results

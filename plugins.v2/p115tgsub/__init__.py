@@ -29,7 +29,7 @@ class P115TGSub(_PluginBase):
     plugin_name = "115 TG订阅追更"
     plugin_desc = "读取 MoviePilot 订阅，直接搜索 Telegram 公开频道中的 115/夸克分享资源并补齐缺失内容。"
     plugin_icon = "https://raw.githubusercontent.com/jxxghp/MoviePilot-Plugins/main/icons/cloud.png"
-    plugin_version = "2.3.2"
+    plugin_version = "2.3.3"
     plugin_author = "lawzizhuang"
     author_url = "https://github.com/lawzizhuang/MoviePilot-Plugins"
     plugin_config_prefix = "p115tgsub_"
@@ -241,13 +241,20 @@ class P115TGSub(_PluginBase):
             max_results_per_channel=self._telegram_max_results,
             max_telegraph_pages=self._telegram_max_telegraph_pages,
         )
+        if self._telegram_enabled:
+            channel_count = len(self._telegram_client.channels)
+            if channel_count:
+                logger.info(
+                    f"115 TG订阅追更已加载 {channel_count} 个 Telegram 公开频道："
+                    f"{', '.join(self._telegram_client.channels)}"
+                )
+            else:
+                logger.warning("Telegram 搜索已启用但未配置有效公开频道")
         self._seedhub_client = SeedHubClient(
             proxy=proxy if self._seedhub_use_proxy else None,
             timeout=self._seedhub_timeout,
             max_candidates=self._seedhub_max_candidates,
         ) if self._seedhub_enabled else None
-        if self._telegram_enabled and not self._telegram_client.channels:
-            logger.warning("Telegram 搜索已启用但未配置有效公开频道")
         cookies = self._resolve_p115_cookie()
         if cookies:
             self._p115_manager = P115ClientManager(cookies=cookies)
@@ -485,6 +492,11 @@ class P115TGSub(_PluginBase):
 
     def _do_sync(self) -> bool:
         self._start_run_status()
+        if self._telegram_client:
+            logger.info(
+                f"本轮 Telegram 搜索将使用 {len(self._telegram_client.channels)} 个频道："
+                f"{', '.join(self._telegram_client.channels)}"
+            )
         if self._seedhub_client:
             self._seedhub_client.begin_run()
         if self._sync_handler:

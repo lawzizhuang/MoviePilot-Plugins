@@ -290,6 +290,39 @@ class SyncHandler:
                 return True
         return False
 
+    def _existing_tv_episodes(self, mediainfo: MediaInfo, season: int) -> Set[int]:
+        """读取 MoviePilot 媒体库已确认的集数，作为订阅状态与补档范围的事实来源。"""
+        try:
+            exists = DownloadChain().media_exists(mediainfo=mediainfo)
+            raw_episodes = getattr(exists, "seasons", {}).get(season, []) if exists else []
+            episodes: Set[int] = set()
+            for item in raw_episodes:
+                try:
+                    episode = int(item)
+                except (TypeError, ValueError):
+                    continue
+                if episode > 0:
+                    episodes.add(episode)
+            if episodes:
+                title_year = getattr(mediainfo, "title_year", getattr(mediainfo, "title", "媒体"))
+                logger.info(
+                    f"{title_year} S{season} 媒体库已确认 {len(episodes)} 集：{sorted(episodes)}"
+                )
+            return episodes
+        except (TypeError, ValueError, AttributeError) as exc:
+            logger.warning(f"{mediainfo.title_year} S{season} 读取媒体库已存在集数失败：{type(exc).__name__}")
+            return set()
+        except Exception as exc:
+            logger.warning(f"{mediainfo.title_year} S{season} 查询媒体库已存在集数异常：{type(exc).__name__}")
+            return set()
+
+    def _sync_subscribe_from_library(self, subscribe, mediainfo: MediaInfo, episodes: Set[int]) -> None:
+        """仅以已入库事实回写订阅；测试模式严格不写入。"""
+        if episodes and not self._dry_run:
+            self._subscribe_handler.check_and_finish_subscribe(
+                subscribe=subscribe, mediainfo=mediainfo, success_episodes=sorted(episodes)
+            )
+
     @staticmethod
     def _fallback_missing_episodes_from_subscribe(subscribe) -> List[int]:
         """当媒体库未返回缺集明细时，使用 MoviePilot 订阅声明的季集范围继续追更。"""
@@ -691,6 +724,18 @@ class SyncHandler:
                         start_ep = not_exist_info.start_episode or 1
                         missing_episodes = list(range(start_ep, not_exist_info.total_episode + 1))
 
+            # 无论 DownloadChain 是否能给出缺集明细，均以媒体库已确认的集数
+            # 回写订阅并从后续补档范围剔除，避免已入库剧集被重复追更。
+            library_episodes = self._existing_tv_episodes(mediainfo, season)
+            subscription_start = max(1, int(getattr(subscribe, "start_episode", 1) or 1))
+            subscription_total = int(getattr(subscribe, "total_episode", 0) or 0)
+            if subscription_total >= subscription_start:
+                library_episodes &= set(range(subscription_start, subscription_total + 1))
+            self._sync_subscribe_from_library(subscribe, mediainfo, library_episodes)
+            if getattr(subscribe, "lack_episode", 1) == 0:
+                logger.info(f"{mediainfo.title_year} S{season} 已按媒体库事实完成订阅")
+                return transferred_count
+
             if not missing_episodes:
                 # 某些 Emby/媒体库配置下，get_no_exists_info 在“媒体库无该剧”时不会返回季集明细。
                 # 订阅本身已声明待追更的起止集数，不能因此跳过 Telegram 搜索。
@@ -706,6 +751,16 @@ class SyncHandler:
                         f"{mediainfo.title_year} S{season} 没有缺失剧集信息，且订阅未提供有效总集数，跳过"
                     )
                     return transferred_count
+
+            if library_episodes:
+                before_library_filter = len(missing_episodes)
+                missing_episodes = [ep for ep in missing_episodes if ep not in library_episodes]
+                skipped_library = before_library_filter - len(missing_episodes)
+                if skipped_library:
+                    logger.info(
+                        f"{mediainfo.title_year} S{season} 跳过媒体库已存在的 {skipped_library} 集："
+                        f"{sorted(library_episodes.intersection(set(range(1, (subscribe.total_episode or 0) + 1))))}"
+                    )
 
             # 过滤掉小于开始集数的剧集
             if subscribe.start_episode:

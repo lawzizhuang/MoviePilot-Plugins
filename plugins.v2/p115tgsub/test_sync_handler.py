@@ -138,6 +138,28 @@ def test_seedhub_episode_range_requires_clear_complete_season():
     assert SyncHandler._seedhub_episode_range("Test.Show.S01E07.1080p", 1) == set()
 
 
+def test_library_episodes_are_normalized_and_invalid_values_are_ignored():
+    handler = object.__new__(SyncHandler)
+    original_download_chain = sync.DownloadChain
+
+    class _Media:
+        title = "测试剧"
+        title_year = "测试剧 (2026)"
+
+    class _Exists:
+        seasons = {1: [1, "2", 0, "invalid", -1, 3]}
+
+    class _DownloadChain:
+        def media_exists(self, mediainfo):
+            return _Exists()
+
+    sync.DownloadChain = _DownloadChain
+    try:
+        assert handler._existing_tv_episodes(_Media(), 1) == {1, 2, 3}
+    finally:
+        sync.DownloadChain = original_download_chain
+
+
 if __name__ == "__main__":
     test_single_character_title_is_not_removed_by_normalization()
     test_unrelated_single_character_title_is_rejected()
@@ -146,4 +168,5 @@ if __name__ == "__main__":
     test_history_sensitive_url_migration_helper_contract()
     test_explicit_wrong_year_is_rejected_by_helper_contract()
     test_seedhub_episode_range_requires_clear_complete_season()
+    test_library_episodes_are_normalized_and_invalid_values_are_ignored()
     print("sync handler tests: OK")

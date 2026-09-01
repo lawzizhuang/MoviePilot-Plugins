@@ -231,6 +231,17 @@ def test_single_character_title_can_follow_telegraph():
     assert results[0]["url"] == "https://pan.quark.cn/s/QkSingle"
 
 
+def test_search_logs_all_configured_channel_requests():
+    first_url = "https://t.me/s/QukanMovie?q=%E4%B8%89%E4%BD%93"
+    second_url = "https://t.me/s/regeng115?q=%E4%B8%89%E4%BD%93"
+    html = '<div class="tgme_widget_message_wrap"><div class="tgme_widget_message" data-post="QukanMovie/1"><div class="tgme_widget_message_text">三体</div></div></div>'
+    client = TelegramWebClient(["QukanMovie", "regeng115"])
+    session = _Session({first_url: html, second_url: html})
+    client._session = session
+    assert client.search_offline_resources("三体", required_title="三体") == []
+    assert session.calls == [first_url, second_url]
+
+
 if __name__ == "__main__":
     test_direct_and_telegraph_115_links_are_extracted()
     test_mixed_cloud_links_only_keep_115()
@@ -243,4 +254,5 @@ if __name__ == "__main__":
     test_quark_duplicate_keeps_access_code_variants_and_counts_merge()
     test_telegraph_quark_link_and_access_code_are_extracted()
     test_single_character_title_can_follow_telegraph()
+    test_search_logs_all_configured_channel_requests()
     print("telegram_web parser tests: OK")
