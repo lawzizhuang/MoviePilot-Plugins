@@ -61,10 +61,15 @@ p115client==0.0.9.6.5.1
 ```text
 插件 ID：P115TGSub
 目录：plugins.v2/p115tgsub/
-版本：2.3.3
+版本：2.3.4
 ```
 
 面向“资源直接发布在 Telegram 公开频道”的订阅追更场景。插件自行访问 Telegram 公开搜索页，不调用 CloudSaver API，也不保存 CloudSaver 的地址、JWT 或账号密码。
+
+### v2.3.4
+
+- **订阅进度核验 / 修复**：详情页新增只读差异预览和确认修复；仅依据 Emby 已入库季集补充 MoviePilot 的 `note` 并重算 `lack_episode`，不回退任何进度。
+- **追更链路隔离**：核验与修复不搜索 Telegram/SeedHub，不访问 115/夸克分享，不转存、不提交离线任务、不触发 SmartStrm、不写下载历史。
 
 ### v2.3 支持范围
 

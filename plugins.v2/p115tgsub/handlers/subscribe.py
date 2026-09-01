@@ -52,10 +52,18 @@ class SubscribeHandler:
         """
         try:
             current_note = subscribe.note or []
+            current_note_set = set()
+            for item in current_note:
+                try:
+                    episode = int(item)
+                except (TypeError, ValueError):
+                    continue
+                if episode > 0:
+                    current_note_set.add(episode)
             if mediainfo.type == MediaType.TV:
-                new_note = list(set(current_note).union(set(success_episodes)))
+                new_note = sorted(current_note_set.union(set(success_episodes)))
             else:
-                new_note = list(set(current_note).union({1}))
+                new_note = sorted(current_note_set.union({1}))
 
             current_lack = subscribe.lack_episode or 0
             total_episode = subscribe.total_episode or 0

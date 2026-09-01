@@ -324,6 +324,106 @@ class SyncHandler:
             )
 
     @staticmethod
+    def _progress_from_confirmed_episodes(subscribe, confirmed_episodes: Set[int]) -> Optional[Dict[str, Any]]:
+        """基于媒体库已确认集数计算只增不减的订阅进度修复方案。"""
+        try:
+            start_episode = max(1, int(getattr(subscribe, "start_episode", 1) or 1))
+            total_episode = int(getattr(subscribe, "total_episode", 0) or 0)
+            current_lack = max(0, int(getattr(subscribe, "lack_episode", 0) or 0))
+        except (TypeError, ValueError):
+            return None
+        if total_episode < start_episode:
+            return None
+
+        expected = set(range(start_episode, total_episode + 1))
+        current_note: Set[int] = set()
+        for item in getattr(subscribe, "note", None) or []:
+            try:
+                episode = int(item)
+            except (TypeError, ValueError):
+                continue
+            if episode > 0:
+                current_note.add(episode)
+        confirmed = expected.intersection(confirmed_episodes)
+        proposed_note = current_note.union(confirmed)
+        # 修复模式只补充媒体库已确认事实；绝不因异常 note/lack 组合扩大缺失数量。
+        proposed_lack = min(current_lack, len(expected - proposed_note))
+        return {
+            "current_note": sorted(current_note),
+            "proposed_note": sorted(proposed_note),
+            "current_lack": current_lack,
+            "proposed_lack": proposed_lack,
+            "confirmed": sorted(confirmed),
+        }
+
+    def audit_subscribe_progress(self, subscribes: List[Any], apply: bool = False) -> Dict[str, Any]:
+        """只核验 Emby 已入库事实并修复电视剧订阅进度；绝不搜索或访问网盘。"""
+        report: Dict[str, Any] = {"scanned": 0, "differences": [], "updated": 0, "issues": []}
+        for subscribe in subscribes or []:
+            if str(getattr(subscribe, "type", "")) != MediaType.TV.value:
+                continue
+            report["scanned"] += 1
+            season = int(getattr(subscribe, "season", 0) or 1)
+            label = f"{getattr(subscribe, 'name', '未知媒体')} S{season}"
+            try:
+                meta = MetaInfo(subscribe.name)
+                meta.year = subscribe.year
+                meta.begin_season = season
+                meta.type = MediaType.TV
+                mediainfo: MediaInfo = self._chain.recognize_media(
+                    meta=meta, mtype=MediaType.TV, tmdbid=subscribe.tmdbid,
+                    doubanid=subscribe.doubanid, cache=True,
+                )
+                if not mediainfo:
+                    report["issues"].append(f"{label}：媒体识别失败")
+                    continue
+                confirmed = self._existing_tv_episodes(mediainfo, season)
+                # 媒体库未确认任何集数时绝不回退 note/lack_episode，避免删除、刮削延迟或库异常造成误修复。
+                if not confirmed:
+                    continue
+                progress = self._progress_from_confirmed_episodes(subscribe, confirmed)
+                if not progress:
+                    report["issues"].append(f"{label}：订阅集数范围无效")
+                    continue
+                if (progress["proposed_note"] == progress["current_note"]
+                        and progress["proposed_lack"] == progress["current_lack"]):
+                    continue
+                item = {
+                    "id": getattr(subscribe, "id", None), "title": getattr(mediainfo, "title_year", label),
+                    "season": season, "confirmed": progress["confirmed"],
+                    "note_before": progress["current_note"], "note_after": progress["proposed_note"],
+                    "lack_before": progress["current_lack"], "lack_after": progress["proposed_lack"],
+                }
+                report["differences"].append(item)
+                if apply:
+                    update_data: Dict[str, Any] = {}
+                    if progress["proposed_note"] != progress["current_note"]:
+                        update_data["note"] = progress["proposed_note"]
+                    if progress["proposed_lack"] != progress["current_lack"]:
+                        update_data["lack_episode"] = progress["proposed_lack"]
+                    if update_data:
+                        SubscribeOper().update(subscribe.id, update_data)
+                        if "note" in update_data:
+                            subscribe.note = update_data["note"]
+                            logger.info(f"修复订阅 {subscribe.name} note：{progress['current_note']} -> {progress['proposed_note']}")
+                        if "lack_episode" in update_data:
+                            subscribe.lack_episode = update_data["lack_episode"]
+                            logger.info(
+                                f"修复订阅 {subscribe.name} 缺失集数："
+                                f"{progress['current_lack']} -> {progress['proposed_lack']}"
+                            )
+                        # 先按预览方案写入，再调用既有完成链路；避免异常旧字段使确认修复扩大缺失数。
+                        if progress["proposed_lack"] == 0:
+                            self._subscribe_handler.check_and_finish_subscribe(
+                                subscribe=subscribe, mediainfo=mediainfo, success_episodes=[]
+                            )
+                        report["updated"] += 1
+            except Exception as exc:
+                logger.warning(f"订阅进度核验 {label} 异常：{type(exc).__name__}")
+                report["issues"].append(f"{label}：{type(exc).__name__}")
+        return report
+
+    @staticmethod
     def _fallback_missing_episodes_from_subscribe(subscribe) -> List[int]:
         """当媒体库未返回缺集明细时，使用 MoviePilot 订阅声明的季集范围继续追更。"""
         try:

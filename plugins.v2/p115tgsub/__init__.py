@@ -29,7 +29,7 @@ class P115TGSub(_PluginBase):
     plugin_name = "115 TG订阅追更"
     plugin_desc = "读取 MoviePilot 订阅，直接搜索 Telegram 公开频道中的 115/夸克分享资源并补齐缺失内容。"
     plugin_icon = "https://raw.githubusercontent.com/jxxghp/MoviePilot-Plugins/main/icons/cloud.png"
-    plugin_version = "2.3.3"
+    plugin_version = "2.3.4"
     plugin_author = "lawzizhuang"
     author_url = "https://github.com/lawzizhuang/MoviePilot-Plugins"
     plugin_config_prefix = "p115tgsub_"
@@ -74,6 +74,7 @@ class P115TGSub(_PluginBase):
     _seedhub_client = None
     _strm_client = None
     _sync_running = False
+    _progress_repair_running = False
     _run_requested = False
     _run_status: Dict[str, Any] = {}
 
@@ -425,10 +426,25 @@ class P115TGSub(_PluginBase):
 
     def get_page(self) -> List[dict]:
         """提供插件详情页操作入口、最近转存记录和运行概览。"""
-        return UIConfig.get_page(self.get_data("history") or [], self.get_data("run_status") or {})
+        return UIConfig.get_page(
+            self.get_data("history") or [], self.get_data("run_status") or {},
+            self.get_data("subscribe_progress_audit") or {},
+        )
 
     def get_api(self) -> List[Dict[str, Any]]:
         return [
+            {
+                "path": "/preview_subscribe_progress",
+                "endpoint": self.api_preview_subscribe_progress,
+                "methods": ["POST"],
+                "summary": "只读预览 Emby 媒体库与 MoviePilot 订阅进度差异",
+            },
+            {
+                "path": "/apply_subscribe_progress",
+                "endpoint": self.api_apply_subscribe_progress,
+                "methods": ["POST"],
+                "summary": "按 Emby 已入库事实修复 MoviePilot 订阅进度",
+            },
             {
                 "path": "/run_once",
                 "endpoint": self.api_run_once,
@@ -630,6 +646,9 @@ class P115TGSub(_PluginBase):
             if self._sync_running:
                 logger.warning("115 TG订阅追更任务正在执行，忽略重复触发")
                 return False
+            if self._progress_repair_running:
+                logger.warning("订阅进度核验/修复正在执行，本次订阅追更不启动")
+                return False
             self._sync_running = True
         try:
             with lock:
@@ -648,6 +667,63 @@ class P115TGSub(_PluginBase):
         with run_state_lock:
             self._run_requested = False
         self._run_sync_exclusive()
+
+    def _run_subscribe_progress_audit(self, apply: bool) -> None:
+        """订阅进度核验后台任务：只读取 Emby 与订阅表，绝不进入任何搜索/网盘链路。"""
+        action = "修复" if apply else "预览"
+        with run_state_lock:
+            if self._sync_running:
+                logger.warning(f"订阅进度{action}任务被跳过：订阅追更任务正在运行")
+                self._progress_repair_running = False
+                return
+            # API 入口已预占标记；直接执行，避免两个请求并发启动。
+            self._progress_repair_running = True
+        try:
+            with lock:
+                with SessionFactory() as db:
+                    # 不限 N/R：修复历史双网盘流程留下的其他当前订阅状态，但不读取订阅历史表。
+                    subscribes = SubscribeOper(db=db).list() or []
+                report = self._sync_handler.audit_subscribe_progress(subscribes, apply=apply)
+            report.update({"action": action, "finished_at": self._now()})
+            self.save_data("subscribe_progress_audit", report)
+            if report["differences"]:
+                logger.info(
+                    f"订阅进度{action}完成：扫描 {report['scanned']} 条电视剧订阅，"
+                    f"发现 {len(report['differences'])} 条差异，已更新 {report['updated']} 条"
+                )
+            else:
+                logger.info(f"订阅进度{action}完成：扫描 {report['scanned']} 条电视剧订阅，未发现差异")
+        except Exception as exc:
+            logger.error(f"订阅进度{action}任务异常：{type(exc).__name__}")
+            self.save_data("subscribe_progress_audit", {
+                "action": action, "finished_at": self._now(), "error": type(exc).__name__,
+                "scanned": 0, "differences": [], "updated": 0, "issues": [],
+            })
+        finally:
+            with run_state_lock:
+                self._progress_repair_running = False
+
+    def _start_subscribe_progress_audit(self, apikey: str, apply: bool) -> Dict[str, Any]:
+        if apikey != settings.API_TOKEN:
+            return {"success": False, "message": "API密钥错误"}
+        with run_state_lock:
+            if self._sync_running or self._progress_repair_running:
+                return {"success": False, "message": "订阅追更或进度核验任务正在执行，请稍后重试"}
+            self._progress_repair_running = True
+        action = "修复" if apply else "只读预览"
+        Thread(
+            target=self._run_subscribe_progress_audit, args=(apply,),
+            name="P115TGSubProgressRepair", daemon=True,
+        ).start()
+        return {"success": True, "message": f"订阅进度{action}已开始；不会搜索、转存、提交离线任务或触发 SmartStrm，请稍后刷新本页查看结果"}
+
+    def api_preview_subscribe_progress(self, apikey: str) -> Dict[str, Any]:
+        """只读预览：不写订阅、不访问 Telegram/115/夸克/SeedHub。"""
+        return self._start_subscribe_progress_audit(apikey, apply=False)
+
+    def api_apply_subscribe_progress(self, apikey: str) -> Dict[str, Any]:
+        """显式确认后的写入：仅按当前 Emby 已确认集数补充订阅进度。"""
+        return self._start_subscribe_progress_audit(apikey, apply=True)
 
     def api_run_once(self, apikey: str) -> Dict[str, Any]:
         """页面按钮入口：异步排队，避免 HTTP 请求等待完整同步任务。"""

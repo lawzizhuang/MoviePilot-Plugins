@@ -160,6 +160,32 @@ def test_library_episodes_are_normalized_and_invalid_values_are_ignored():
         sync.DownloadChain = original_download_chain
 
 
+def test_progress_plan_only_adds_confirmed_episodes_and_never_regresses():
+    subscribe_obj = type("Subscribe", (), {
+        "start_episode": 0, "total_episode": 5, "lack_episode": 4,
+        "note": [1, "3", 0, "invalid"],
+    })()
+    assert SyncHandler._progress_from_confirmed_episodes(subscribe_obj, {2, 3, 7}) == {
+        "current_note": [1, 3], "proposed_note": [1, 2, 3],
+        "current_lack": 4, "proposed_lack": 2, "confirmed": [2, 3],
+    }
+
+
+def test_progress_plan_never_increases_existing_lack_episode():
+    subscribe_obj = type("Subscribe", (), {
+        "start_episode": 1, "total_episode": 5, "lack_episode": 1, "note": [1],
+    })()
+    progress = SyncHandler._progress_from_confirmed_episodes(subscribe_obj, {1})
+    assert progress["proposed_lack"] == 1
+
+
+def test_progress_plan_rejects_invalid_subscription_range():
+    subscribe_obj = type("Subscribe", (), {
+        "start_episode": 3, "total_episode": 2, "lack_episode": 0, "note": [],
+    })()
+    assert SyncHandler._progress_from_confirmed_episodes(subscribe_obj, {1, 2}) is None
+
+
 if __name__ == "__main__":
     test_single_character_title_is_not_removed_by_normalization()
     test_unrelated_single_character_title_is_rejected()
@@ -169,4 +195,7 @@ if __name__ == "__main__":
     test_explicit_wrong_year_is_rejected_by_helper_contract()
     test_seedhub_episode_range_requires_clear_complete_season()
     test_library_episodes_are_normalized_and_invalid_values_are_ignored()
+    test_progress_plan_only_adds_confirmed_episodes_and_never_regresses()
+    test_progress_plan_never_increases_existing_lack_episode()
+    test_progress_plan_rejects_invalid_subscription_range()
     print("sync handler tests: OK")

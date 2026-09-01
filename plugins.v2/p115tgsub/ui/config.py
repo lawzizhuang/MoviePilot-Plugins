@@ -217,10 +217,14 @@ class UIConfig:
         return form, defaults
 
     @staticmethod
-    def get_page(history: List[Dict[str, Any]], run_status: Dict[str, Any] = None) -> List[dict]:
+    def get_page(
+        history: List[Dict[str, Any]], run_status: Dict[str, Any] = None,
+        progress_audit: Dict[str, Any] = None,
+    ) -> List[dict]:
         """插件详情页：提供即时操作入口与最近一轮脱敏运行概览。"""
         history = history or []
         status = run_status or {}
+        progress_audit = progress_audit or {}
         failures = status.get("quark_failures") or {}
         failure_names = {
             "share_expired": "分享失效", "password_invalid": "访问码异常", "access_denied": "访问受限",
@@ -250,6 +254,23 @@ class UIConfig:
             overview += "\n最近媒体：" + "；".join(media_lines)
         if status.get("last_error"):
             overview += f"\n最近异常：{status['last_error']}"
+        audit_differences = progress_audit.get("differences") or []
+        audit_lines = [
+            f"{item.get('title', '未知媒体')} S{item.get('season', 1)}："
+            f"已入库 E{','.join(str(ep) for ep in item.get('confirmed', [])) or '-'}；"
+            f"缺失 {item.get('lack_before', 0)} → {item.get('lack_after', 0)}"
+            for item in audit_differences[:8]
+        ]
+        audit_overview = (
+            f"订阅进度核验：{progress_audit.get('finished_at') or '尚未运行'} · "
+            f"{progress_audit.get('action') or '请先只读预览'}\n"
+            f"扫描电视剧订阅 {progress_audit.get('scanned', 0)} 条 · "
+            f"差异 {len(audit_differences)} 条 · 已更新 {progress_audit.get('updated', 0)} 条"
+        )
+        if audit_lines:
+            audit_overview += "\n" + "\n".join(audit_lines)
+        if progress_audit.get("issues"):
+            audit_overview += f"\n核验异常 {len(progress_audit['issues'])} 条（详见插件日志）"
         return [{
             "component": "VCard",
             "props": {"class": "mb-4"},
@@ -268,6 +289,44 @@ class UIConfig:
                         "props": {
                             "type": "info", "variant": "tonal",
                             "text": f"115 TG订阅追更 · 已记录 {recent_count} 条转存结果。立即运行会按“115 优先、夸克兜底”处理全部待处理订阅；夸克与 SmartStrm 连通性可独立验证。",
+                        },
+                    },
+                    {
+                        "component": "VAlert",
+                        "props": {
+                            "type": "warning" if audit_differences else "info", "variant": "tonal",
+                            "text": audit_overview,
+                        },
+                    },
+                    {
+                        "component": "VRow",
+                        "props": {"class": "mt-2"},
+                        "content": [
+                            {
+                                "component": "VCol", "props": {"cols": 12, "md": 6},
+                                "content": [{
+                                    "component": "VBtn",
+                                    "props": {"color": "info", "variant": "outlined", "prepend-icon": "mdi-clipboard-text-search-outline"},
+                                    "text": "只读预览订阅进度差异",
+                                    "events": {"click": {"api": f"/plugin/P115TGSub/preview_subscribe_progress?apikey={settings.API_TOKEN}", "method": "post"}},
+                                }],
+                            },
+                            {
+                                "component": "VCol", "props": {"cols": 12, "md": 6},
+                                "content": [{
+                                    "component": "VBtn",
+                                    "props": {"color": "warning", "variant": "outlined", "prepend-icon": "mdi-check-decagram-outline"},
+                                    "text": "确认按当前媒体库修复订阅进度",
+                                    "events": {"click": {"api": f"/plugin/P115TGSub/apply_subscribe_progress?apikey={settings.API_TOKEN}", "method": "post"}},
+                                }],
+                            },
+                        ],
+                    },
+                    {
+                        "component": "VAlert",
+                        "props": {
+                            "type": "info", "variant": "tonal",
+                            "text": "订阅进度核验只读取 Emby 已入库季集和 MoviePilot 当前订阅；不会搜索 Telegram/SeedHub、访问115或夸克分享、创建目录、转存、提交离线任务、触发 SmartStrm 或写下载历史。确认修复只补充已入库集数，绝不回退订阅进度。",
                         },
                     },
                     {
