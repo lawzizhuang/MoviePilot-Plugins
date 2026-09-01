@@ -31,6 +31,24 @@ def _texts(nodes):
     return [str(node.get("text") or "") for node in _walk(nodes)]
 
 
+def test_form_groups_settings_and_keeps_all_models():
+    form, defaults = UIConfig.get_form()
+    components = [node.get("component") for node in _walk(form)]
+    texts = _texts(form)
+    models = {
+        (node.get("props") or {}).get("model")
+        for node in _walk(form)
+        if (node.get("props") or {}).get("model")
+    }
+    assert components.count("VCard") >= 3
+    assert components.count("VExpansionPanel") == 4
+    assert "订阅追更设置" in texts
+    assert "运行与安全" in texts
+    assert "115 凭据与目标目录" in texts
+    assert {"enabled", "dry_run", "cookie_source", "telegram_channels", "offline_enabled", "fourkmonitor_enabled", "seedhub_enabled", "quark_enabled", "strm_enabled"} <= models
+    assert models <= set(defaults)
+
+
 def test_page_uses_structured_cards_instead_of_text_overview():
     page = UIConfig.get_page(
         history=[{"title": "测试剧", "type": "电视剧", "season": 1, "episode": 3, "status": "成功", "time": "2026-09-01 23:00:00"}],
@@ -73,6 +91,7 @@ def test_page_keeps_all_action_endpoints():
 
 
 if __name__ == "__main__":
+    test_form_groups_settings_and_keeps_all_models()
     test_page_uses_structured_cards_instead_of_text_overview()
     test_page_keeps_all_action_endpoints()
     print("p115tgsub UI tests: OK")

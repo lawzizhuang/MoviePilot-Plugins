@@ -210,6 +210,64 @@ class UIConfig:
                 },
             ],
         }]
+
+        def settings_card(title: str, icon: str, content: List[dict], color: str = "primary") -> dict:
+            return {
+                "component": "VCard", "props": {"class": "mb-4", "variant": "outlined"},
+                "content": [
+                    {"component": "VCardTitle", "props": {"class": "d-flex align-center py-3"}, "content": [
+                        {"component": "VIcon", "props": {"color": color, "class": "mr-2"}, "text": icon},
+                        {"component": "span", "props": {"class": "text-subtitle-1 font-weight-bold"}, "text": title},
+                    ]},
+                    {"component": "VCardText", "props": {"class": "pt-0"}, "content": content},
+                ],
+            }
+
+        def source_panel(title: str, icon: str, description: str, content: List[dict], color: str) -> dict:
+            return {
+                "component": "VExpansionPanel",
+                "content": [
+                    {"component": "VExpansionPanelTitle", "content": [
+                        {"component": "VIcon", "props": {"color": color, "class": "mr-3"}, "text": icon},
+                        {"component": "div", "content": [
+                            {"component": "div", "props": {"class": "font-weight-bold"}, "text": title},
+                            {"component": "div", "props": {"class": "text-caption text-medium-emphasis"}, "text": description},
+                        ]},
+                    ]},
+                    {"component": "VExpansionPanelText", "content": content},
+                ],
+            }
+
+        blocks = form[0]["content"]
+        form = [{
+            "component": "VForm",
+            "content": [
+                settings_card("订阅追更设置", "mdi-tune-variant", [
+                    {"component": "div", "props": {"class": "text-body-2 text-medium-emphasis mb-3"}, "text": "按“115 分享 → Telegram 正文离线 → 4K Monitor 免费磁力 → SeedHub 公开磁力 → 夸克兜底”依次补全 MoviePilot 待处理订阅。夸克成功后由 SmartStrm 增量生成 STRM。"},
+                    {"component": "div", "content": [
+                        {"component": "VChip", "props": {"size": "small", "color": "primary", "variant": "tonal", "class": "mr-2 mb-2"}, "text": "115 优先"},
+                        {"component": "VChip", "props": {"size": "small", "color": "secondary", "variant": "tonal", "class": "mr-2 mb-2"}, "text": "夸克兜底"},
+                        {"component": "VChip", "props": {"size": "small", "color": "warning", "variant": "tonal", "class": "mr-2 mb-2"}, "text": "首次保持测试模式"},
+                        {"component": "VChip", "props": {"size": "small", "color": "info", "variant": "tonal", "class": "mb-2"}, "text": "仅公开资源"},
+                    ]},
+                ]),
+                settings_card("运行与安全", "mdi-shield-play-outline", [
+                    blocks[1], blocks[18], blocks[19],
+                ], "warning"),
+                settings_card("115 凭据与目标目录", "mdi-cloud-key-outline", [
+                    blocks[2], blocks[3], blocks[4],
+                ], "success"),
+                {
+                    "component": "VExpansionPanels", "props": {"variant": "accordion", "class": "mb-4"},
+                    "content": [
+                        source_panel("Telegram 公开频道", "mdi-send-outline", "公开搜索、候选数量与 Telegraph 二跳限制", [blocks[15], blocks[16], blocks[17]], "info"),
+                        source_panel("115 离线与公开磁力补充", "mdi-download-network-outline", "Telegram 正文、4K Monitor 与 SeedHub 的受控离线下载", [blocks[5], blocks[9], blocks[6], blocks[7], blocks[8]], "warning"),
+                        source_panel("夸克兜底转存", "mdi-cloud-sync-outline", "仅在 115 与公开磁力来源无可用候选时使用", [blocks[10], blocks[11]], "secondary"),
+                        source_panel("SmartStrm 后处理", "mdi-file-link-outline", "夸克转存确认后生成本地 STRM，失败仅进入重试队列", [blocks[12], blocks[13], blocks[14]], "teal"),
+                    ],
+                },
+            ],
+        }]
         defaults = {
             "enabled": False, "notify": True, "onlyonce": False, "cron": "30 */8 * * *",
             "cookie_source": "p115strmhelper", "cookies": "", "save_path": "/我的接收/MoviePilot-TG/TV", "movie_save_path": "/我的接收/MoviePilot-TG/Movie",
