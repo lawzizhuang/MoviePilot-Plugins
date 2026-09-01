@@ -251,21 +251,97 @@ class UIConfig:
         media = status.get("media") or {}
         media_lines = [f"{title}：{stage}" for title, stage in list(media.items())[-5:]]
         recent_count = len(history)
-        overview = (
-            f"最近运行：{status.get('finished_at') or status.get('started_at') or '暂无'} · "
-            f"{status.get('result') or '暂无记录'}\n"
-            f"订阅 {status.get('subscribe_count', 0)} · 115 转存 {status.get('transferred_115', 0)} · "
-            f"夸克转存 {status.get('transferred_quark', 0)}\n"
-            f"Telegram 候选 {status.get('telegram_raw_candidates', 0)} · 合并重复 {status.get('telegram_duplicates_merged', 0)} · "
-            f"夸克候选 {status.get('quark_candidates', 0)}\n"
-            f"夸克跳过：{failure_text}\n"
-            f"115 离线下载：待确认 {offline.get('pending', 0)} / 已确认 {offline.get('completed', 0)} / 超时 {offline.get('expired', 0)}\n"
-            f"SmartStrm 重试：成功 {strm.get('triggered', 0)} / 失败 {strm.get('failed', 0)} / 停滞 {strm.get('stalled', 0)}"
-        )
-        if media_lines:
-            overview += "\n最近媒体：" + "；".join(media_lines)
-        if status.get("last_error"):
-            overview += f"\n最近异常：{status['last_error']}"
+        run_result = str(status.get("result") or "尚未运行")
+        run_color = "success" if run_result == "完成" else "warning" if "未发现" in run_result else "error" if "失败" in run_result else "info"
+        run_time = status.get("finished_at") or status.get("started_at") or "暂无运行记录"
+        transferred_total = int(status.get("transferred_115") or 0) + int(status.get("transferred_quark") or 0)
+        telegram_candidates = int(status.get("telegram_raw_candidates") or 0)
+        quark_candidates = int(status.get("quark_candidates") or 0)
+
+        def metric_card(label: str, value: str, icon: str, color: str, hint: str = "") -> dict:
+            return {
+                "component": "VCol", "props": {"cols": 6, "sm": 3},
+                "content": [{
+                    "component": "VCard", "props": {"variant": "tonal", "color": color, "class": "h-100"},
+                    "content": [{
+                        "component": "VCardText", "props": {"class": "pa-3"},
+                        "content": [
+                            {"component": "VIcon", "props": {"size": "small", "class": "mb-2"}, "text": icon},
+                            {"component": "div", "props": {"class": "text-h6 font-weight-bold"}, "text": value},
+                            {"component": "div", "props": {"class": "text-caption"}, "text": label},
+                            *([{ "component": "div", "props": {"class": "text-caption text-medium-emphasis mt-1"}, "text": hint}] if hint else []),
+                        ],
+                    }],
+                }],
+            }
+
+        source_chips = [
+            {"component": "VChip", "props": {"size": "small", "variant": "tonal", "color": "info", "class": "mr-2 mb-2"}, "text": f"Telegram {telegram_candidates} 候选"},
+            {"component": "VChip", "props": {"size": "small", "variant": "tonal", "color": "secondary", "class": "mr-2 mb-2"}, "text": f"夸克 {quark_candidates} 候选"},
+            {"component": "VChip", "props": {"size": "small", "variant": "tonal", "color": "warning", "class": "mr-2 mb-2"}, "text": f"离线待确认 {offline.get('pending', 0)}"},
+            {"component": "VChip", "props": {"size": "small", "variant": "tonal", "color": "success", "class": "mr-2 mb-2"}, "text": f"离线已确认 {offline.get('completed', 0)}"},
+        ]
+        run_dashboard = {
+            "component": "VCard", "props": {"class": "mb-3", "variant": "outlined"},
+            "content": [
+                {"component": "VCardTitle", "props": {"class": "d-flex align-center py-3"}, "content": [
+                    {"component": "VIcon", "props": {"color": "primary", "class": "mr-2"}, "text": "mdi-view-dashboard-outline"},
+                    {"component": "span", "props": {"class": "text-subtitle-1 font-weight-bold"}, "text": "订阅追更运行概览"},
+                    {"component": "VSpacer"},
+                    {"component": "VChip", "props": {"color": run_color, "size": "small", "variant": "tonal"}, "text": run_result},
+                ]},
+                {"component": "VCardText", "props": {"class": "pt-0"}, "content": [
+                    {"component": "div", "props": {"class": "text-caption text-medium-emphasis mb-3"}, "text": f"最近完成：{run_time}"},
+                    {"component": "VRow", "content": [
+                        metric_card("待处理订阅", f"{status.get('subscribe_count', 0)}", "mdi-playlist-check", "primary"),
+                        metric_card("本轮转存", f"{transferred_total}", "mdi-cloud-check-outline", "success", f"115 {status.get('transferred_115', 0)} · 夸克 {status.get('transferred_quark', 0)}"),
+                        metric_card("离线待确认", f"{offline.get('pending', 0)}", "mdi-cloud-clock-outline", "warning", f"已确认 {offline.get('completed', 0)}"),
+                        metric_card("历史记录", f"{recent_count}", "mdi-history", "secondary", f"SmartStrm 成功 {strm.get('triggered', 0)}"),
+                    ]},
+                    {"component": "VDivider", "props": {"class": "my-3"}},
+                    {"component": "VRow", "content": [
+                        {"component": "VCol", "props": {"cols": 12, "md": 7}, "content": [
+                            {"component": "div", "props": {"class": "text-caption text-medium-emphasis mb-2"}, "text": "来源与队列"},
+                            {"component": "div", "content": source_chips},
+                            {"component": "div", "props": {"class": "text-caption text-medium-emphasis mt-1"}, "text": f"夸克跳过：{failure_text} · SmartStrm 失败 {strm.get('failed', 0)} / 停滞 {strm.get('stalled', 0)}"},
+                        ]},
+                        {"component": "VCol", "props": {"cols": 12, "md": 5}, "content": [
+                            {"component": "div", "props": {"class": "text-caption text-medium-emphasis mb-2"}, "text": "最近媒体状态"},
+                            {"component": "div", "props": {"class": "text-body-2"}, "text": "；".join(media_lines) if media_lines else "本轮没有新增转存记录"},
+                            *([{ "component": "div", "props": {"class": "text-caption text-error mt-2"}, "text": f"最近异常：{status['last_error']}"}] if status.get("last_error") else []),
+                        ]},
+                    ]},
+                ]},
+            ],
+        }
+        recent_history_rows = []
+        for item in reversed(history[-8:]):
+            media_label = str(item.get("title") or "未知媒体")
+            if item.get("season"):
+                media_label += f" · S{int(item.get('season') or 0):02d}"
+            if item.get("episode"):
+                media_label += f"E{int(item.get('episode') or 0):02d}"
+            success = str(item.get("status") or "") == "成功"
+            recent_history_rows.append({
+                "component": "tr", "content": [
+                    {"component": "td", "props": {"class": "py-3"}, "content": [{"component": "div", "props": {"class": "font-weight-medium"}, "text": media_label}, {"component": "div", "props": {"class": "text-caption text-medium-emphasis"}, "text": str(item.get("type") or "媒体")}]},
+                    {"component": "td", "props": {"class": "py-3 text-no-wrap"}, "content": [{"component": "VChip", "props": {"size": "small", "color": "success" if success else "error", "variant": "tonal"}, "text": "成功" if success else "失败"}]},
+                    {"component": "td", "props": {"class": "py-3 text-no-wrap text-caption text-medium-emphasis"}, "text": str(item.get("time") or "—")},
+                ],
+            })
+        history_card = {
+            "component": "VCard", "props": {"class": "mb-3", "variant": "outlined"},
+            "content": [
+                {"component": "VCardTitle", "props": {"class": "d-flex align-center py-3"}, "content": [
+                    {"component": "VIcon", "props": {"color": "secondary", "class": "mr-2"}, "text": "mdi-history"},
+                    {"component": "span", "props": {"class": "text-subtitle-1 font-weight-bold"}, "text": "最近转存记录"},
+                    {"component": "VSpacer"},
+                    {"component": "VChip", "props": {"size": "small", "variant": "tonal"}, "text": f"共 {recent_count} 条"},
+                ]},
+                ({"component": "VTable", "props": {"density": "comfortable", "class": "text-body-2"}, "content": [{"component": "thead", "content": [{"component": "tr", "content": [{"component": "th", "text": "媒体"}, {"component": "th", "text": "结果"}, {"component": "th", "text": "时间"}]}]}, {"component": "tbody", "content": recent_history_rows}]}
+                 if recent_history_rows else {"component": "VCardText", "props": {"class": "text-medium-emphasis"}, "text": "暂无转存记录；测试模式不会写入转存历史。"}),
+            ],
+        }
         audit_differences = progress_audit.get("differences") or []
 
         def format_episodes(episodes: List[Any]) -> str:
@@ -347,108 +423,51 @@ class UIConfig:
                 "component": "VAlert", "props": {"type": "success" if progress_audit else "info", "variant": "tonal", "class": "mb-3", "text": "最近一次核验未发现需要修复的订阅进度。" if progress_audit else "尚未运行订阅进度核验；请先执行只读预览。"},
             }
         )
-        return [{
-            "component": "VCard",
-            "props": {"class": "mb-4"},
-            "content": [{
-                "component": "VCardText",
-                "content": [
-                    {
-                        "component": "VAlert",
-                        "props": {
-                            "type": "info", "variant": "tonal",
-                            "text": overview,
-                        },
-                    },
-                    {
-                        "component": "VAlert",
-                        "props": {
-                            "type": "info", "variant": "tonal",
-                            "text": f"115 TG订阅追更 · 已记录 {recent_count} 条转存结果。立即运行会按“115 优先、夸克兜底”处理全部待处理订阅；夸克与 SmartStrm 连通性可独立验证。",
-                        },
-                    },
-                    audit_header,
-                    audit_details,
-                    {
-                        "component": "VAlert",
-                        "props": {
-                            "type": "warning" if progress_audit.get("issues") else "info", "variant": "tonal", "class": "mb-3",
-                            "text": (f"核验异常 {len(progress_audit['issues'])} 条，详见插件日志。" if progress_audit.get("issues") else "确认修复会重新读取当前 Emby 状态，并只补充已确认集数；不会回退订阅进度。"),
-                        },
-                    },
-                    {
-                        "component": "VRow",
-                        "props": {"class": "mt-2"},
-                        "content": [
-                            {
-                                "component": "VCol", "props": {"cols": 12, "md": 6},
-                                "content": [{
-                                    "component": "VBtn",
-                                    "props": {"color": "info", "variant": "outlined", "prepend-icon": "mdi-clipboard-text-search-outline"},
-                                    "text": "只读预览订阅进度差异",
-                                    "events": {"click": {"api": f"/plugin/P115TGSub/preview_subscribe_progress?apikey={settings.API_TOKEN}", "method": "post"}},
-                                }],
-                            },
-                            {
-                                "component": "VCol", "props": {"cols": 12, "md": 6},
-                                "content": [{
-                                    "component": "VBtn",
-                                    "props": {"color": "warning", "variant": "outlined", "prepend-icon": "mdi-check-decagram-outline"},
-                                    "text": "确认按当前媒体库修复订阅进度",
-                                    "events": {"click": {"api": f"/plugin/P115TGSub/apply_subscribe_progress?apikey={settings.API_TOKEN}", "method": "post"}},
-                                }],
-                            },
-                        ],
-                    },
-                    {
-                        "component": "VAlert",
-                        "props": {
-                            "type": "info", "variant": "tonal",
-                            "text": "订阅进度核验只读取 Emby 已入库季集和 MoviePilot 当前订阅；不会搜索 Telegram/SeedHub、访问115或夸克分享、创建目录、转存、提交离线任务、触发 SmartStrm 或写下载历史。确认修复只补充已入库集数，绝不回退订阅进度。",
-                        },
-                    },
-                    {
-                        "component": "VRow",
-                        "props": {"class": "mt-2"},
-                        "content": [
-                            {
-                                "component": "VCol", "props": {"cols": 12, "md": 4},
-                                "content": [{
-                                    "component": "VBtn",
-                                    "props": {"color": "primary", "variant": "outlined", "prepend-icon": "mdi-play-circle-outline"},
-                                    "text": "立即运行一次",
-                                    "events": {"click": {"api": f"/plugin/P115TGSub/run_once?apikey={settings.API_TOKEN}", "method": "post"}},
-                                }],
-                            },
-                            {
-                                "component": "VCol", "props": {"cols": 12, "md": 3},
-                                "content": [{
-                                    "component": "VBtn",
-                                    "props": {"color": "secondary", "variant": "outlined", "prepend-icon": "mdi-cloud-check-outline"},
-                                    "text": "验证夸克连通性",
-                                    "events": {"click": {"api": f"/plugin/P115TGSub/verify_quark?apikey={settings.API_TOKEN}", "method": "post"}},
-                                }],
-                            },
-                            {
-                                "component": "VCol", "props": {"cols": 12, "md": 3},
-                                "content": [{
-                                    "component": "VBtn",
-                                    "props": {"color": "teal", "variant": "outlined", "prepend-icon": "mdi-webhook"},
-                                    "text": "测试 SmartStrm",
-                                    "events": {"click": {"api": f"/plugin/P115TGSub/test_smartstrm?apikey={settings.API_TOKEN}", "method": "post"}},
-                                }],
-                            },
-                            {
-                                "component": "VCol", "props": {"cols": 12, "md": 3},
-                                "content": [{
-                                    "component": "VBtn",
-                                    "props": {"color": "error", "variant": "outlined", "prepend-icon": "mdi-delete-sweep"},
-                                    "text": "清理插件日志",
-                                    "events": {"click": {"api": f"/plugin/P115TGSub/clear_plugin_log?apikey={settings.API_TOKEN}", "method": "post"}},
-                                }],
-                            },
-                        ],
-                    },
-                ],
-            }],
-        }]
+        run_actions = {
+            "component": "VCard", "props": {"class": "mb-3", "variant": "outlined"},
+            "content": [
+                {"component": "VCardTitle", "props": {"class": "d-flex align-center py-3"}, "content": [
+                    {"component": "VIcon", "props": {"color": "primary", "class": "mr-2"}, "text": "mdi-rocket-launch-outline"},
+                    {"component": "span", "props": {"class": "text-subtitle-1 font-weight-bold"}, "text": "追更操作"},
+                    {"component": "VSpacer"},
+                    {"component": "VChip", "props": {"size": "small", "color": "info", "variant": "tonal"}, "text": "115 优先 · 夸克兜底"},
+                ]},
+                {"component": "VCardText", "props": {"class": "pt-0"}, "content": [
+                    {"component": "div", "props": {"class": "text-caption text-medium-emphasis mb-3"}, "text": "立即运行会处理全部 MoviePilot 待处理订阅；测试模式下只验证候选，不转存、不提交离线任务。"},
+                    {"component": "VRow", "content": [
+                        {"component": "VCol", "props": {"cols": 12, "md": 5}, "content": [{"component": "VBtn", "props": {"block": True, "color": "primary", "prepend-icon": "mdi-play-circle-outline"}, "text": "立即运行一次", "events": {"click": {"api": f"/plugin/P115TGSub/run_once?apikey={settings.API_TOKEN}", "method": "post"}}}]},
+                        {"component": "VCol", "props": {"cols": 12, "md": 3}, "content": [{"component": "VBtn", "props": {"block": True, "color": "secondary", "variant": "outlined", "prepend-icon": "mdi-cloud-check-outline"}, "text": "验证夸克", "events": {"click": {"api": f"/plugin/P115TGSub/verify_quark?apikey={settings.API_TOKEN}", "method": "post"}}}]},
+                        {"component": "VCol", "props": {"cols": 12, "md": 2}, "content": [{"component": "VBtn", "props": {"block": True, "color": "teal", "variant": "outlined", "prepend-icon": "mdi-webhook"}, "text": "测试 STRM", "events": {"click": {"api": f"/plugin/P115TGSub/test_smartstrm?apikey={settings.API_TOKEN}", "method": "post"}}}]},
+                        {"component": "VCol", "props": {"cols": 12, "md": 2}, "content": [{"component": "VBtn", "props": {"block": True, "color": "error", "variant": "text", "prepend-icon": "mdi-delete-sweep"}, "text": "清理日志", "events": {"click": {"api": f"/plugin/P115TGSub/clear_plugin_log?apikey={settings.API_TOKEN}", "method": "post"}}}]},
+                    ]},
+                ]},
+            ],
+        }
+        progress_actions = {
+            "component": "VCard", "props": {"class": "mb-3", "variant": "outlined"},
+            "content": [
+                {"component": "VCardText", "content": [
+                    {"component": "div", "props": {"class": "d-flex align-center mb-2"}, "content": [{"component": "VIcon", "props": {"color": "info", "class": "mr-2"}, "text": "mdi-shield-check-outline"}, {"component": "span", "props": {"class": "text-subtitle-2 font-weight-bold"}, "text": "安全边界"}]},
+                    {"component": "div", "props": {"class": "text-body-2 text-medium-emphasis"}, "text": "订阅进度核验只读取 Emby 已入库季集和当前订阅；不会搜索 Telegram / SeedHub，不访问 115 或夸克分享，不创建目录、不转存、不提交离线任务、不触发 SmartStrm 或写下载历史。确认修复只补充已确认集数，绝不回退订阅进度。"},
+                ]},
+                {"component": "VCardActions", "props": {"class": "px-4 pb-4 pt-0"}, "content": [
+                    {"component": "VBtn", "props": {"color": "info", "variant": "outlined", "prepend-icon": "mdi-clipboard-text-search-outline"}, "text": "只读预览差异", "events": {"click": {"api": f"/plugin/P115TGSub/preview_subscribe_progress?apikey={settings.API_TOKEN}", "method": "post"}}},
+                    {"component": "VBtn", "props": {"color": "warning", "variant": "outlined", "prepend-icon": "mdi-check-decagram-outline", "class": "ml-2"}, "text": "确认修复进度", "events": {"click": {"api": f"/plugin/P115TGSub/apply_subscribe_progress?apikey={settings.API_TOKEN}", "method": "post"}}},
+                ]},
+            ],
+        }
+        return [
+            run_dashboard,
+            run_actions,
+            history_card,
+            audit_header,
+            audit_details,
+            {
+                "component": "VAlert",
+                "props": {
+                    "type": "warning" if progress_audit.get("issues") else "info", "variant": "tonal", "class": "mb-3",
+                    "text": (f"核验异常 {len(progress_audit['issues'])} 条，详见插件日志。" if progress_audit.get("issues") else "核验完成后会在上方展示逐条差异和修复结果。"),
+                },
+            },
+            progress_actions,
+        ]
