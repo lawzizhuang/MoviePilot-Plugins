@@ -56,11 +56,12 @@
   "release": true,
   "description": "读取 MoviePilot 订阅，直接搜索 Telegram 公开频道中的 115/夸克分享资源并补齐缺失内容；夸克转存后触发 SmartStrm 本地增量生成 STRM。",
   "labels": "订阅,115网盘,Telegram,追更",
-  "version": "2.3.4",
+  "version": "2.3.5",
   "icon": "https://raw.githubusercontent.com/jxxghp/MoviePilot-Plugins/main/icons/cloud.png",
   "author": "lawzizhuang",
   "level": 1,
   "history": {
+   "v2.3.5": "优化：订阅进度核验结果改为状态卡片与差异表格，连续集数压缩展示，直观呈现 Emby 已入库、订阅 note 修复前后及缺失集数变化。",
    "v2.3.4": "新增：订阅进度核验与确认修复。只读取 Emby 已入库季集和 MoviePilot 当前订阅，先预览差异、确认后仅补充 note/lack_episode；不搜索、不访问网盘、不转存、不提交离线任务、不触发 SmartStrm。",
    "v2.3.3": "修复：以媒体库实际已入库集数回写 MoviePilot 订阅状态，并从回退补档范围中剔除，避免重复追更；补充 Telegram 频道加载与每次搜索请求数量日志，便于核验频道配置是否完整生效。",
    "v2.3.2": "修复：旧夸克成功历史不再被当作 115 目标目录文件；用户删除夸克资源并重置订阅后可重新回补至 115。SeedHub 首次返回 403/429 时本轮熔断，避免连续请求触发限流。",

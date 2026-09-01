@@ -255,22 +255,86 @@ class UIConfig:
         if status.get("last_error"):
             overview += f"\n最近异常：{status['last_error']}"
         audit_differences = progress_audit.get("differences") or []
-        audit_lines = [
-            f"{item.get('title', '未知媒体')} S{item.get('season', 1)}："
-            f"已入库 E{','.join(str(ep) for ep in item.get('confirmed', [])) or '-'}；"
-            f"缺失 {item.get('lack_before', 0)} → {item.get('lack_after', 0)}"
-            for item in audit_differences[:8]
-        ]
-        audit_overview = (
-            f"订阅进度核验：{progress_audit.get('finished_at') or '尚未运行'} · "
-            f"{progress_audit.get('action') or '请先只读预览'}\n"
-            f"扫描电视剧订阅 {progress_audit.get('scanned', 0)} 条 · "
-            f"差异 {len(audit_differences)} 条 · 已更新 {progress_audit.get('updated', 0)} 条"
+
+        def format_episodes(episodes: List[Any]) -> str:
+            """将连续集数压缩为 E01–E03，供窄屏表格快速阅读。"""
+            values = sorted({int(episode) for episode in episodes or [] if str(episode).isdigit() and int(episode) > 0})
+            if not values:
+                return "—"
+            ranges = []
+            start = previous = values[0]
+            for episode in values[1:]:
+                if episode == previous + 1:
+                    previous = episode
+                    continue
+                ranges.append(f"E{start:02d}" if start == previous else f"E{start:02d}–E{previous:02d}")
+                start = previous = episode
+            ranges.append(f"E{start:02d}" if start == previous else f"E{start:02d}–E{previous:02d}")
+            return "、".join(ranges)
+
+        audit_action = progress_audit.get("action") or "尚未运行"
+        audit_color = "warning" if audit_differences else "success" if progress_audit else "info"
+        audit_header = {
+            "component": "VCard",
+            "props": {"class": "mb-3", "variant": "outlined"},
+            "content": [
+                {
+                    "component": "VCardTitle",
+                    "props": {"class": "d-flex align-center py-3"},
+                    "content": [
+                        {"component": "VIcon", "props": {"color": "info", "class": "mr-2"}, "text": "mdi-clipboard-text-search-outline"},
+                        {"component": "span", "props": {"class": "text-subtitle-1 font-weight-bold"}, "text": "订阅进度核验"},
+                        {"component": "VSpacer"},
+                        {"component": "VChip", "props": {"color": audit_color, "size": "small", "variant": "tonal"}, "text": audit_action},
+                    ],
+                },
+                {
+                    "component": "VCardText",
+                    "props": {"class": "pt-0"},
+                    "content": [
+                        {
+                            "component": "div", "props": {"class": "text-caption text-medium-emphasis mb-3"},
+                            "text": f"完成时间：{progress_audit.get('finished_at') or '尚未运行'}",
+                        },
+                        {
+                            "component": "VRow",
+                            "content": [
+                                {"component": "VCol", "props": {"cols": 4}, "content": [{"component": "div", "props": {"class": "text-caption text-medium-emphasis"}, "text": "已扫描"}, {"component": "div", "props": {"class": "text-h6"}, "text": f"{progress_audit.get('scanned', 0)} 条"}]},
+                                {"component": "VCol", "props": {"cols": 4}, "content": [{"component": "div", "props": {"class": "text-caption text-medium-emphasis"}, "text": "发现差异"}, {"component": "div", "props": {"class": "text-h6"}, "text": f"{len(audit_differences)} 条"}]},
+                                {"component": "VCol", "props": {"cols": 4}, "content": [{"component": "div", "props": {"class": "text-caption text-medium-emphasis"}, "text": "已修复"}, {"component": "div", "props": {"class": "text-h6"}, "text": f"{progress_audit.get('updated', 0)} 条"}]},
+                            ],
+                        },
+                    ],
+                },
+            ],
+        }
+        audit_rows = []
+        for item in audit_differences:
+            before_note = format_episodes(item.get("note_before"))
+            after_note = format_episodes(item.get("note_after"))
+            confirmed = format_episodes(item.get("confirmed"))
+            audit_rows.append({
+                "component": "tr",
+                "content": [
+                    {"component": "td", "props": {"class": "py-3"}, "content": [{"component": "div", "props": {"class": "font-weight-medium"}, "text": item.get("title", "未知媒体")}, {"component": "div", "props": {"class": "text-caption text-medium-emphasis"}, "text": f"第 {item.get('season', 1)} 季"}]},
+                    {"component": "td", "props": {"class": "py-3 text-no-wrap"}, "content": [{"component": "VChip", "props": {"color": "success", "size": "small", "variant": "tonal"}, "text": confirmed}]},
+                    {"component": "td", "props": {"class": "py-3 text-no-wrap"}, "content": [{"component": "div", "props": {"class": "text-caption text-medium-emphasis"}, "text": before_note}, {"component": "div", "props": {"class": "d-flex align-center mt-1"}, "content": [{"component": "VIcon", "props": {"size": "x-small", "color": "warning", "class": "mr-1"}, "text": "mdi-arrow-right"}, {"component": "span", "props": {"class": "font-weight-medium"}, "text": after_note}]}]},
+                    {"component": "td", "props": {"class": "py-3 text-no-wrap"}, "content": [{"component": "VChip", "props": {"color": "warning", "size": "small", "variant": "tonal"}, "text": f"{item.get('lack_before', 0)} → {item.get('lack_after', 0)}"}]},
+                ],
+            })
+        audit_details = (
+            {
+                "component": "VCard",
+                "props": {"class": "mb-3", "variant": "outlined"},
+                "content": [
+                    {"component": "VCardText", "props": {"class": "pb-0"}, "content": [{"component": "div", "props": {"class": "text-subtitle-2 font-weight-bold"}, "text": "待修复差异"}, {"component": "div", "props": {"class": "text-caption text-medium-emphasis mt-1"}, "text": "绿色为 Emby 已确认入库集数；中间列展示 MoviePilot note 的修复前后变化。"}]},
+                    {"component": "VTable", "props": {"density": "comfortable", "class": "text-body-2"}, "content": [{"component": "thead", "content": [{"component": "tr", "content": [{"component": "th", "text": "订阅"}, {"component": "th", "text": "Emby 已入库"}, {"component": "th", "text": "订阅 note"}, {"component": "th", "text": "缺失集数"}]}]}, {"component": "tbody", "content": audit_rows}]},
+                ],
+            }
+            if audit_rows else {
+                "component": "VAlert", "props": {"type": "success" if progress_audit else "info", "variant": "tonal", "class": "mb-3", "text": "最近一次核验未发现需要修复的订阅进度。" if progress_audit else "尚未运行订阅进度核验；请先执行只读预览。"},
+            }
         )
-        if audit_lines:
-            audit_overview += "\n" + "\n".join(audit_lines)
-        if progress_audit.get("issues"):
-            audit_overview += f"\n核验异常 {len(progress_audit['issues'])} 条（详见插件日志）"
         return [{
             "component": "VCard",
             "props": {"class": "mb-4"},
@@ -291,11 +355,13 @@ class UIConfig:
                             "text": f"115 TG订阅追更 · 已记录 {recent_count} 条转存结果。立即运行会按“115 优先、夸克兜底”处理全部待处理订阅；夸克与 SmartStrm 连通性可独立验证。",
                         },
                     },
+                    audit_header,
+                    audit_details,
                     {
                         "component": "VAlert",
                         "props": {
-                            "type": "warning" if audit_differences else "info", "variant": "tonal",
-                            "text": audit_overview,
+                            "type": "warning" if progress_audit.get("issues") else "info", "variant": "tonal", "class": "mb-3",
+                            "text": (f"核验异常 {len(progress_audit['issues'])} 条，详见插件日志。" if progress_audit.get("issues") else "确认修复会重新读取当前 Emby 状态，并只补充已确认集数；不会回退订阅进度。"),
                         },
                     },
                     {
