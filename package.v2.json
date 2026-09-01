@@ -54,13 +54,14 @@
  "P115TGSub": {
   "name": "115 TG订阅追更",
   "release": true,
-  "description": "读取 MoviePilot 订阅，直接搜索 Telegram 公开频道中的 115/夸克分享资源并补齐缺失内容；夸克转存后触发 SmartStrm 本地增量生成 STRM。",
+  "description": "读取 MoviePilot 订阅，搜索 Telegram 公开频道及 4K Monitor 匿名免费磁力资源并补齐缺失内容；夸克转存后触发 SmartStrm 本地增量生成 STRM。",
   "labels": "订阅,115网盘,Telegram,追更",
-  "version": "2.3.5",
+  "version": "2.4.0",
   "icon": "https://raw.githubusercontent.com/jxxghp/MoviePilot-Plugins/main/icons/cloud.png",
   "author": "lawzizhuang",
   "level": 1,
   "history": {
+   "v2.4.0": "新增：4K Monitor 匿名免费磁力补充来源。按 MoviePilot TMDB ID 精确查询，仅接受免费未锁定候选；不登录、不使用 Cookie、不消耗会员或 credits。电影和标题明确匹配当前季集的电视剧资源均可验证；403/429 本轮熔断。",
    "v2.3.5": "优化：订阅进度核验结果改为状态卡片与差异表格，连续集数压缩展示，直观呈现 Emby 已入库、订阅 note 修复前后及缺失集数变化。",
    "v2.3.4": "新增：订阅进度核验与确认修复。只读取 Emby 已入库季集和 MoviePilot 当前订阅，先预览差异、确认后仅补充 note/lack_episode；不搜索、不访问网盘、不转存、不提交离线任务、不触发 SmartStrm。",
    "v2.3.3": "修复：以媒体库实际已入库集数回写 MoviePilot 订阅状态，并从回退补档范围中剔除，避免重复追更；补充 Telegram 频道加载与每次搜索请求数量日志，便于核验频道配置是否完整生效。",

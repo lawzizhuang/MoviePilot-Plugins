@@ -1,6 +1,11 @@
 # 115 TG 订阅追更（P115TGSub）
 
-MoviePilot V2 插件：读取 MoviePilot 待处理订阅（状态 `N`、`R`），直接检索 Telegram 公开频道中的 **115 与夸克** 分享资源，校验分享目录与缺集后转存缺失的电影和剧集；夸克转存成功后联动 SmartStrm 在本地增量生成 STRM。
+MoviePilot V2 插件：读取 MoviePilot 待处理订阅（状态 `N`、`R`），检索 Telegram 公开频道中的 **115 与夸克** 分享资源及 4K Monitor 匿名免费磁力候选，校验分享目录与缺集后转存缺失的电影和剧集；夸克转存成功后联动 SmartStrm 在本地增量生成 STRM。
+
+## v2.4.0
+
+- **4K Monitor 自动排查**：每轮按 MoviePilot 已确认 TMDB ID 检索匿名免费候选；电影与标题明确匹配的剧集资源可进入既有 115 离线队列。
+- **免费与访问边界**：只接受 `free`、`credit_cost=0`、未锁定且允许访问的候选；不登录、不使用 Cookie、不消耗会员/credits、不调用解锁接口。403/429 立即熔断本轮后续请求。
 
 ## v2.3.5
 
@@ -27,6 +32,9 @@ MoviePilot V2 插件：读取 MoviePilot 待处理订阅（状态 `N`、`R`）�
 - **SeedHub 直连优先**：SeedHub 公开页面默认不复用 Telegram HTTP 代理，降低代理出口触发访问限制的概率；容器直连失败时可在配置页按需开启代理。
 
 ## v2.3 能力
+
+- **4K Monitor 匿名免费磁力**：按 MoviePilot 已确认的 TMDB ID 精确查询 `4kmonitor.org`；每轮自动排查，仅接受 `free`、`credit_cost=0`、未锁定且允许访问的候选。电影及标题明确匹配当前季集的电视剧资源可进入既有 115 离线队列。
+- **4K Monitor 安全边界**：不登录、不使用 Cookie、不调用会员/credits 解锁接口；磁力仅在最终免费候选上解析一次，403/429 本轮熔断，默认直连并以低频节流访问。
 
 - **SeedHub 公开磁力**：通过指定 Telegram 公开频道（默认 `seedhub_pro`）定位 `sidhub.cc/movies/<ID>/`，读取公开磁力列表并解码同源 `link_start` 页的 Magnet，提交到既有 115 电影或电视剧季目录。
 - **完整季安全提交**：`全N集`、`EP01-N` 等清晰完整季候选只创建一个 115 云下载任务；以目标目录实际出现的视频文件逐集确认，绝不因任务提交或全集标题提前完成未播订阅。
@@ -93,9 +101,9 @@ MoviePilot V2 插件：读取 MoviePilot 待处理订阅（状态 `N`、`R`）�
 1. 安装并启用「夸克网盘存储」（`QuarkDisk`）并完成 Cookie 配置（夸克链路运行时复用）；
 2. 在「Telegram 公开频道」填写公开频道用户名或链接，每行一个（默认 `QukanMovie` / `lsp115` / `vip115hot`）；
 3. 配置独立的 115 与夸克电影/电视剧转存目录；
-4. 如需使用 ED2K / 磁力：在公开频道列表添加直链资源频道并启用「115 ED2K / 磁力离线下载」；如需 SeedHub，另行启用「SeedHub 公开磁力资源」（默认频道 `seedhub_pro`）；
+4. 如需使用 ED2K / 磁力：在公开频道列表添加直链资源频道并启用「115 ED2K / 磁力离线下载」；4K Monitor 默认每轮按 TMDB ID 排查匿名免费候选；如需 SeedHub，另行启用「SeedHub 公开磁力资源」（默认频道 `seedhub_pro`）；
 5. 配置夸克链路和 SmartStrm 后处理；
-6. 保持「测试模式」开启，先点详情页「立即运行一次」，核对日志中的 Telegram、SeedHub、115/夸克候选校验与剧集匹配；
+6. 保持「测试模式」开启，先点详情页「立即运行一次」，核对日志中的 Telegram、4K Monitor、SeedHub、115/夸克候选校验与剧集匹配；
 7. 用详情页「验证夸克连通性」「测试 SmartStrm」分别做只读验证；
 8. 确认无误后关闭测试模式。
 

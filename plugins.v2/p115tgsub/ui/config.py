@@ -16,7 +16,7 @@ class UIConfig:
                         "component": "VCol", "props": {"cols": 12}, "content": [{
                             "component": "VAlert", "props": {
                                 "type": "info", "variant": "tonal",
-                                "text": "v2.3：115 优先、夸克兜底的双网盘订阅追更。Telegram 公开频道先按订阅标题筛选候选；115 分享、Telegram 正文直链和 SeedHub 公开磁力均可进入定向 115 离线下载，均无可用资源时才尝试夸克转存；夸克转存成功后由 SmartStrm 在本地增量生成 STRM。"
+                                "text": "v2.4：115 优先、夸克兜底的双网盘订阅追更。Telegram 公开频道先按订阅标题筛选候选；115 分享、Telegram 正文直链、4K Monitor 匿名免费磁力和 SeedHub 公开磁力均可进入定向 115 离线下载，均无可用资源时才尝试夸克转存；夸克转存成功后由 SmartStrm 在本地增量生成 STRM。"
                             }
                         }]
                     }]
@@ -85,7 +85,7 @@ class UIConfig:
                         "component": "VCol", "props": {"cols": 12}, "content": [{
                             "component": "VAlert", "props": {
                                 "type": "info", "variant": "tonal",
-                                "text": "SeedHub 公开磁力：通过指定 Telegram 公开频道定位 sidhub.cc 电影页，只读取公开磁力列表并提交至上方 115 目标目录。完整季磁力只创建一个云下载任务；不登录、不使用 Cookie、不抓取其他网盘标签。"
+                                "text": "4K Monitor：仅以 MoviePilot 已确认的 TMDB ID 精确查询站内资源，仅接受匿名免费、未锁定候选；不登录、不使用 Cookie、不消耗会员或 credits、不调用解锁接口。电影可处理单资源；电视剧仅处理标题明确匹配当前待补季集的资源。遇到 403/429 本轮立即停止。"
                             }
                         }]
                     }]
@@ -93,7 +93,17 @@ class UIConfig:
                 {
                     "component": "VRow",
                     "content": [
-                        {"component": "VCol", "props": {"cols": 12, "md": 3}, "content": [{"component": "VSwitch", "props": {"model": "seedhub_enabled", "label": "启用 SeedHub 公开磁力资源", "hint": "需同时启用上方 115 ED2K / 磁力离线下载；仅在 Telegram 直链无可用候选时尝试。"}}]},
+                        {"component": "VCol", "props": {"cols": 12, "md": 3}, "content": [{"component": "VSwitch", "props": {"model": "fourkmonitor_enabled", "label": "启用 4K Monitor 匿名免费磁力", "hint": "每轮按 TMDB ID 自动检查；仅免费未锁定候选，位于 Telegram 直链之后、SeedHub 之前。"}}]},
+                        {"component": "VCol", "props": {"cols": 12, "md": 3}, "content": [{"component": "VTextField", "props": {"model": "fourkmonitor_timeout", "label": "4K Monitor 请求超时（秒）", "type": "number", "placeholder": "20"}}]},
+                        {"component": "VCol", "props": {"cols": 12, "md": 3}, "content": [{"component": "VTextField", "props": {"model": "fourkmonitor_max_candidates", "label": "单次最多免费候选数", "type": "number", "placeholder": "3"}}]},
+                        {"component": "VCol", "props": {"cols": 12, "md": 3}, "content": [{"component": "VTextField", "props": {"model": "fourkmonitor_interval_seconds", "label": "请求最小间隔（秒）", "type": "number", "placeholder": "2"}}]},
+                        {"component": "VCol", "props": {"cols": 12, "md": 12}, "content": [{"component": "VSwitch", "props": {"model": "fourkmonitor_use_proxy", "label": "4K Monitor 使用 MoviePilot HTTP 代理", "hint": "默认关闭并直连；仅在容器直连失败时开启。403/429 或无效响应会停止本轮后续检查。", "persistent-hint": True}}]},
+                    ],
+                },
+                {
+                    "component": "VRow",
+                    "content": [
+                        {"component": "VCol", "props": {"cols": 12, "md": 3}, "content": [{"component": "VSwitch", "props": {"model": "seedhub_enabled", "label": "启用 SeedHub 公开磁力资源", "hint": "需同时启用上方 115 ED2K / 磁力离线下载；仅在 Telegram、4K Monitor 均无可用候选时尝试。"}}]},
                         {"component": "VCol", "props": {"cols": 12, "md": 3}, "content": [{"component": "VTextField", "props": {"model": "seedhub_channel", "label": "SeedHub Telegram 公开频道", "placeholder": "seedhub_pro"}}]},
                         {"component": "VCol", "props": {"cols": 12, "md": 3}, "content": [{"component": "VTextField", "props": {"model": "seedhub_timeout", "label": "SeedHub 请求超时（秒）", "type": "number", "placeholder": "20"}}]},
                         {"component": "VCol", "props": {"cols": 12, "md": 3}, "content": [{"component": "VTextField", "props": {"model": "seedhub_max_candidates", "label": "单次最多检查磁力候选数", "type": "number", "placeholder": "5"}}]},
@@ -209,6 +219,8 @@ class UIConfig:
             "offline_enabled": False, "offline_max_per_sync": 5, "offline_max_wait_hours": 24,
             "seedhub_enabled": False, "seedhub_channel": "seedhub_pro", "seedhub_timeout": 20, "seedhub_max_candidates": 5,
             "seedhub_use_proxy": False,
+            "fourkmonitor_enabled": True, "fourkmonitor_timeout": 20, "fourkmonitor_max_candidates": 3,
+            "fourkmonitor_interval_seconds": 2, "fourkmonitor_use_proxy": False,
             "quark_enabled": False, "quark_timeout": 30, "quark_risk_cooldown": 1800,
             "quark_save_path": "/夸克接收/MoviePilot-TG/TV", "quark_movie_save_path": "/夸克接收/MoviePilot-TG/Movie",
             "strm_enabled": False, "smartstrm_webhook_url": "", "smartstrm_task": "tv,movie",

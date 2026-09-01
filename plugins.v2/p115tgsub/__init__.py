@@ -15,7 +15,7 @@ from app.log import logger
 from app.plugins import _PluginBase
 from app.schemas.types import EventType, MediaType, NotificationType
 
-from .clients import P115ClientManager, QuarkShareClient, SeedHubClient, SmartStrmClient, TelegramWebClient
+from .clients import FourKMonitorClient, P115ClientManager, QuarkShareClient, SeedHubClient, SmartStrmClient, TelegramWebClient
 from .handlers import QuarkSyncHandler, SearchHandler, SubscribeHandler, SyncHandler
 from .ui import UIConfig
 
@@ -29,7 +29,7 @@ class P115TGSub(_PluginBase):
     plugin_name = "115 TG订阅追更"
     plugin_desc = "读取 MoviePilot 订阅，直接搜索 Telegram 公开频道中的 115/夸克分享资源并补齐缺失内容。"
     plugin_icon = "https://raw.githubusercontent.com/jxxghp/MoviePilot-Plugins/main/icons/cloud.png"
-    plugin_version = "2.3.5"
+    plugin_version = "2.4.0"
     plugin_author = "lawzizhuang"
     author_url = "https://github.com/lawzizhuang/MoviePilot-Plugins"
     plugin_config_prefix = "p115tgsub_"
@@ -70,8 +70,14 @@ class P115TGSub(_PluginBase):
     _seedhub_timeout = 20
     _seedhub_max_candidates = 5
     _seedhub_use_proxy = False
+    _fourkmonitor_enabled = True
+    _fourkmonitor_timeout = 20
+    _fourkmonitor_max_candidates = 3
+    _fourkmonitor_interval_seconds = 2
+    _fourkmonitor_use_proxy = False
     _quark_client = None
     _seedhub_client = None
+    _fourkmonitor_client = None
     _strm_client = None
     _sync_running = False
     _progress_repair_running = False
@@ -168,6 +174,13 @@ class P115TGSub(_PluginBase):
         self._seedhub_max_candidates = self._int_config(config.get("seedhub_max_candidates", 5), 5, 1, 20)
         # SeedHub 公开页通常无需 Telegram 代理；默认直连可避免代理出口触发站点访问限制。
         self._seedhub_use_proxy = bool(config.get("seedhub_use_proxy", False))
+        self._fourkmonitor_enabled = bool(config.get("fourkmonitor_enabled", True))
+        self._fourkmonitor_timeout = self._int_config(config.get("fourkmonitor_timeout", 20), 20, 5, 60)
+        self._fourkmonitor_max_candidates = self._int_config(config.get("fourkmonitor_max_candidates", 3), 3, 1, 10)
+        self._fourkmonitor_interval_seconds = self._int_config(
+            config.get("fourkmonitor_interval_seconds", 2), 2, 1, 10
+        )
+        self._fourkmonitor_use_proxy = bool(config.get("fourkmonitor_use_proxy", False))
         try:
             self._init_clients()
             self._init_handlers()
@@ -181,6 +194,7 @@ class P115TGSub(_PluginBase):
             self._quark_handler = None
             self._quark_client = None
             self._seedhub_client = None
+            self._fourkmonitor_client = None
             self._strm_client = None
             return
 
@@ -256,6 +270,12 @@ class P115TGSub(_PluginBase):
             timeout=self._seedhub_timeout,
             max_candidates=self._seedhub_max_candidates,
         ) if self._seedhub_enabled else None
+        self._fourkmonitor_client = FourKMonitorClient(
+            proxy=proxy if self._fourkmonitor_use_proxy else None,
+            timeout=self._fourkmonitor_timeout,
+            max_candidates=self._fourkmonitor_max_candidates,
+            min_interval_seconds=self._fourkmonitor_interval_seconds,
+        ) if self._fourkmonitor_enabled else None
         cookies = self._resolve_p115_cookie()
         if cookies:
             self._p115_manager = P115ClientManager(cookies=cookies)
@@ -287,6 +307,7 @@ class P115TGSub(_PluginBase):
         self._search_handler = SearchHandler(
             self._telegram_client, self._telegram_enabled, self._seedhub_client,
             self._seedhub_enabled, self._seedhub_channel,
+            self._fourkmonitor_client, self._fourkmonitor_enabled,
         )
         self._subscribe_handler = SubscribeHandler()
         self._sync_handler = SyncHandler(
@@ -406,6 +427,11 @@ class P115TGSub(_PluginBase):
             "seedhub_enabled": self._seedhub_enabled, "seedhub_channel": self._seedhub_channel,
             "seedhub_timeout": self._seedhub_timeout, "seedhub_max_candidates": self._seedhub_max_candidates,
             "seedhub_use_proxy": self._seedhub_use_proxy,
+            "fourkmonitor_enabled": self._fourkmonitor_enabled,
+            "fourkmonitor_timeout": self._fourkmonitor_timeout,
+            "fourkmonitor_max_candidates": self._fourkmonitor_max_candidates,
+            "fourkmonitor_interval_seconds": self._fourkmonitor_interval_seconds,
+            "fourkmonitor_use_proxy": self._fourkmonitor_use_proxy,
         }
 
     def stop_service(self) -> None:
@@ -515,6 +541,8 @@ class P115TGSub(_PluginBase):
             )
         if self._seedhub_client:
             self._seedhub_client.begin_run()
+        if self._fourkmonitor_client:
+            self._fourkmonitor_client.begin_run()
         if self._sync_handler:
             self._sync_handler.begin_run()
         if self._quark_handler:
@@ -526,9 +554,11 @@ class P115TGSub(_PluginBase):
             except Exception as exc:
                 logger.warning(f"SmartStrm 待重试队列处理异常：{exc}")
 
-        if not self._telegram_enabled or not self._telegram_client or not self._telegram_client.channels:
-            logger.error("Telegram 公开频道搜索未正确配置，无法执行订阅追更")
-            self._finish_run_status(result="失败", error="Telegram 公开频道未配置")
+        telegram_ready = bool(self._telegram_enabled and self._telegram_client and self._telegram_client.channels)
+        fourkmonitor_ready = bool(self._fourkmonitor_enabled and self._fourkmonitor_client)
+        if not telegram_ready and not fourkmonitor_ready:
+            logger.error("Telegram 公开频道与 4K Monitor 均未正确配置，无法执行订阅追更")
+            self._finish_run_status(result="失败", error="未配置 Telegram 公开频道或 4K Monitor")
             return False
         p115_ready = bool(self._p115_manager)
         if p115_ready:

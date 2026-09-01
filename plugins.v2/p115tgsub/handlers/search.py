@@ -10,16 +10,21 @@ class SearchHandler:
     """使用 Telegram 公开频道搜索 115 与夸克分享链接。"""
 
     def __init__(self, telegram_client, telegram_enabled: bool = False, seedhub_client=None,
-                 seedhub_enabled: bool = False, seedhub_channel: str = "seedhub_pro") -> None:
+                 seedhub_enabled: bool = False, seedhub_channel: str = "seedhub_pro",
+                 fourkmonitor_client=None, fourkmonitor_enabled: bool = False) -> None:
         self._telegram_client = telegram_client
         self._telegram_enabled = bool(telegram_enabled)
         self._seedhub_client = seedhub_client
         self._seedhub_enabled = bool(seedhub_enabled)
         self._seedhub_channel = str(seedhub_channel or "seedhub_pro").strip()
+        self._fourkmonitor_client = fourkmonitor_client
+        self._fourkmonitor_enabled = bool(fourkmonitor_enabled)
 
     def get_enabled_sources(self) -> List[str]:
         if self._telegram_enabled and self._telegram_client and self._telegram_client.channels:
             return ["telegram"]
+        if self._fourkmonitor_enabled and self._fourkmonitor_client:
+            return ["4kmonitor"]
         return []
 
     def search_resources(
@@ -97,6 +102,50 @@ class SearchHandler:
                 return output
         return []
 
+    def search_fourkmonitor_resources(
+        self,
+        mediainfo: MediaInfo,
+        media_type: MediaType,
+        season: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        """按 TMDB ID 检索 4K Monitor 匿名免费候选；剧集仅返回明确匹配目标季集的资源。"""
+        if not self._fourkmonitor_enabled or not self._fourkmonitor_client:
+            return []
+        if getattr(self._fourkmonitor_client, "blocked", False):
+            return []
+        logger.info(f"使用 4K Monitor 精确 TMDB 检查免费磁力资源：{mediainfo.title}")
+        resources = self._fourkmonitor_client.list_resources(mediainfo, media_type)
+        if media_type == MediaType.TV:
+            resources = [
+                resource for resource in resources
+                if self._fourkmonitor_episode_range(str(resource.get("title") or ""), int(season or 1))
+            ]
+        if resources:
+            logger.info(f"4K Monitor/TMDB 免费候选：{len(resources)} 条")
+        return resources
+
+    @staticmethod
+    def _fourkmonitor_episode_range(title: str, season: int) -> set[int]:
+        """仅识别明确的目标季集数范围，剧集资源一律以离线队列逐集确认。"""
+        import re
+        from ..utils import FileMatcher
+
+        text = str(title or "")
+        if FileMatcher._contains_other_season(text, season):
+            return set()
+        match = re.search(r"(?:E|EP)\s*(\d{1,3})\s*[-~～至到]\s*(\d{1,3})(?!\d)", text, re.IGNORECASE)
+        if match:
+            start, end = int(match.group(1)), int(match.group(2))
+            return set(range(start, end + 1)) if 1 <= start <= end <= 999 else set()
+        match = re.search(r"[Ss](\d{1,2})[Ee](\d{1,3})(?!\d)", text)
+        if match:
+            return {int(match.group(2))} if int(match.group(1)) == season else set()
+        match = re.search(r"(?:^|[^A-Za-z0-9])(?:EP|E)\s*(\d{1,3})(?!\d)", text, re.IGNORECASE)
+        if match and season == 1:
+            return {int(match.group(1))}
+        match = re.search(r"(?:全|\[全)\s*(\d{1,3})\s*集", text)
+        return set(range(1, int(match.group(1)) + 1)) if match else set()
+
     def search_single_source(
         self,
         source: str,
@@ -104,6 +153,8 @@ class SearchHandler:
         media_type: MediaType,
         season: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
+        if source == "4kmonitor":
+            return []
         if source != "telegram":
             logger.warning(f"未知的搜索源：{source}")
             return []

@@ -61,10 +61,15 @@ p115client==0.0.9.6.5.1
 ```text
 插件 ID：P115TGSub
 目录：plugins.v2/p115tgsub/
-版本：2.3.5
+版本：2.4.0
 ```
 
-面向“资源直接发布在 Telegram 公开频道”的订阅追更场景。插件自行访问 Telegram 公开搜索页，不调用 CloudSaver API，也不保存 CloudSaver 的地址、JWT 或账号密码。
+面向“资源直接发布在 Telegram 公开频道”及 4K Monitor 匿名免费资源的订阅追更场景。插件自行访问 Telegram 公开搜索页和按 TMDB ID 的 4K Monitor 公开资源页，不调用 CloudSaver API，也不保存 CloudSaver 的地址、JWT 或账号密码。
+
+### v2.4.0
+
+- **4K Monitor 自动排查**：每轮按 MoviePilot 已确认 TMDB ID 精确检索匿名免费候选；电影与标题明确匹配的剧集资源可进入既有 115 离线队列。
+- **严格免费边界**：只接受 `free`、`credit_cost=0`、未锁定且允许访问的候选；不登录、不使用 Cookie、不消耗会员/credits、不调用解锁接口。403/429 立即熔断本轮后续请求。
 
 ### v2.3.5
 
@@ -80,7 +85,7 @@ p115client==0.0.9.6.5.1
 ```text
 MoviePilot 订阅
 → Telegram 公开频道搜索页
-→ 115 分享、正文直链 ED2K/Magnet 或 SeedHub 公开磁力资源
+→ 115 分享、正文直链 ED2K/Magnet、4K Monitor 匿名免费磁力或 SeedHub 公开磁力资源
 → 定向保存至 115 电影/电视剧季目录，目标文件二次确认
 → 无可用 115 资源时转存夸克（复用 QuarkDisk Cookie）
 → 更新 MoviePilot 订阅状态
@@ -133,6 +138,7 @@ anxia.com
 
    ```text
    Telegram 搜索
+   → 4K Monitor 匿名免费候选检查
    → 115 分享校验 / 夸克分享校验
    → 分享目录文件匹配
    ```
@@ -144,6 +150,7 @@ anxia.com
 - 自动处理全部 MoviePilot 待处理订阅（状态 N、R）；
 - 默认测试模式，不转存、不修改订阅、不触发 SmartStrm；
 - Telegram 消息文本必须包含订阅标题；
+- 4K Monitor 仅按精确 TMDB ID、低频检查匿名免费候选；不登录、不使用 Cookie、不请求会员/credits 解锁；
 - 115 优先、夸克兜底，同一集不双盘重复转存；
 - 夸克转存成功以目标目录二次确认为准；
 - 夸克风控词触发冷却熔断，仅网络瞬态异常重试；
