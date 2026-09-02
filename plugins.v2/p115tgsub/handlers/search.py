@@ -190,10 +190,11 @@ class SearchHandler:
             return []
 
         candidates: List[str] = []
-        # 连载剧优先用缺集精确检索。泛标题结果往往被旧单集占满，即使频道内已经
-        # 发布目标集也无法进入 115 目录校验。最多尝试前三个缺集，保持低频边界。
-        if media_type == MediaType.TV and season and preferred_episodes:
-            for episode in sorted({int(item) for item in preferred_episodes if int(item) > 0})[:3]:
+        # 仅对少量连续待补集启用精确检索；整季缺失仍保留泛搜索，避免放大
+        # Telegram 公开请求及后续 115 分享校验压力。
+        target_episodes = sorted({int(item) for item in preferred_episodes or [] if int(item) > 0})
+        if media_type == MediaType.TV and season and 0 < len(target_episodes) <= 3:
+            for episode in target_episodes:
                 candidates.append(f"{title} S{int(season):02d}E{episode:02d}")
         if media_type == MediaType.TV and season and season > 1:
             candidates.extend([f"{title} 第{season}季", f"{title} {season}"])

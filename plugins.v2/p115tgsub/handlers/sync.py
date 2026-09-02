@@ -698,11 +698,17 @@ class SyncHandler:
                 try:
                     # 先检查分享链接是否有效
                     share_status = self._p115_manager.check_share_status(share_url)
+                    if share_status.is_transient_error:
+                        logger.info("115 分享状态暂时不可用，本轮不将该候选标记为失效")
+                        continue
                     if not share_status.is_valid:
                         logger.warning(f"115 分享链接无效：{share_status.status_text}")
                         continue
 
                     share_files = self._p115_manager.list_share_files(share_url)
+                    if share_files is None:
+                        logger.info("115 分享目录暂时不可读取，本轮不将该候选判定为空")
+                        continue
                     if not share_files:
                         logger.info("115 分享链接无内容")
                         continue
@@ -1193,6 +1199,9 @@ class SyncHandler:
                     try:
                         # 检查分享链接是否有效
                         share_status = self._p115_manager.check_share_status(share_url)
+                        if share_status.is_transient_error:
+                            logger.info("115 分享状态暂时不可用，本轮不将该候选标记为失效")
+                            continue
                         if not share_status.is_valid:
                             logger.warning(f"115 分享链接无效：{share_status.status_text}")
                             continue
@@ -1202,6 +1211,9 @@ class SyncHandler:
                             share_url,
                             target_season=(season if self._skip_other_season_dirs else None)
                         )
+                        if share_files is None:
+                            logger.info("115 分享目录暂时不可读取，本轮不将该候选判定为空")
+                            continue
                         if not share_files:
                             logger.info("115 分享链接无内容")
                             continue

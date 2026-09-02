@@ -29,7 +29,7 @@ class P115TGSub(_PluginBase):
     plugin_name = "115 TG订阅追更"
     plugin_desc = "读取 MoviePilot 订阅，直接搜索 Telegram 公开频道中的 115/夸克分享资源并补齐缺失内容。"
     plugin_icon = "https://raw.githubusercontent.com/jxxghp/MoviePilot-Plugins/main/icons/cloud.png"
-    plugin_version = "2.4.3"
+    plugin_version = "2.4.4"
     plugin_author = "lawzizhuang"
     author_url = "https://github.com/lawzizhuang/MoviePilot-Plugins"
     plugin_config_prefix = "p115tgsub_"
@@ -543,6 +543,8 @@ class P115TGSub(_PluginBase):
             self._seedhub_client.begin_run()
         if self._fourkmonitor_client:
             self._fourkmonitor_client.begin_run()
+        if self._p115_manager:
+            self._p115_manager.begin_run()
         if self._sync_handler:
             self._sync_handler.begin_run()
         if self._quark_handler:

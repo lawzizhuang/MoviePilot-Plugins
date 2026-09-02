@@ -56,11 +56,12 @@
   "release": true,
   "description": "读取 MoviePilot 订阅，搜索 Telegram 公开频道及 4K Monitor 匿名免费磁力资源并补齐缺失内容；夸克转存后触发 SmartStrm 本地增量生成 STRM。",
   "labels": "订阅,115网盘,Telegram,追更",
-  "version": "2.4.3",
+  "version": "2.4.4",
   "icon": "https://raw.githubusercontent.com/jxxghp/MoviePilot-Plugins/main/icons/cloud.png",
   "author": "lawzizhuang",
   "level": 1,
   "history": {
+   "v2.4.4": "修复：115 Web 查询遇 405/5xx/网络临时异常时仅退避重试一次，并区分“查询暂时失败”与“分享失效”；连续 3 次 405 后熔断本轮 Web 查询。少量缺集才启用 Telegram 单集定向检索。",
    "v2.4.3": "修复：连载剧缺集优先以 SxxExx 定向检索 Telegram，并在每频道上限前优先排序目标集候选，避免旧集占满候选而漏检新集。",
    "v2.4.2": "优化：重构设置页为运行与安全、115凭据与目录、按来源展开的 Telegram/离线磁力/夸克/SmartStrm 分区，保留全部原有配置项与默认值。",
    "v2.4.1": "优化：重构插件详情页为运行概览、追更操作、最近转存记录和订阅进度核验分区卡片，移除长段纯文本状态展示。",

@@ -40,13 +40,14 @@ def test_tv_missing_episode_keywords_are_prioritized():
     ]
 
 
-def test_tv_targeted_keywords_are_bounded_to_three_episodes():
+def test_tv_many_missing_episodes_uses_generic_keywords_only():
     media = types.SimpleNamespace(title="测试剧", year="2026")
-    keywords = SearchHandler._build_keywords(media, MediaType.TV, 1, [5, 1, 3, 4])
-    assert keywords[:3] == ["测试剧 S01E01", "测试剧 S01E03", "测试剧 S01E04"]
+    assert SearchHandler._build_keywords(media, MediaType.TV, 1, [5, 1, 3, 4]) == [
+        "测试剧 2026", "测试剧"
+    ]
 
 
 if __name__ == "__main__":
     test_tv_missing_episode_keywords_are_prioritized()
-    test_tv_targeted_keywords_are_bounded_to_three_episodes()
+    test_tv_many_missing_episodes_uses_generic_keywords_only()
     print("p115tgsub search handler tests: OK")

@@ -31,6 +31,8 @@ class ShareLinkStatus:
     is_expired: bool = False            # 链接是否已过期
     is_cancelled: bool = False          # 链接是否已被取消
     is_deleted: bool = False            # 分享的文件是否已删除
+    is_transient_error: bool = False    # 查询接口暂时不可用，不等同分享失效
+    error_kind: str = ""                # transient_405 / transient_5xx / transient_network
     error_code: int = 0                 # 错误码（0 表示无错误）
     error_message: str = ""             # 错误信息
     file_count: int = 0                 # 分享中的文件数量
@@ -180,6 +182,9 @@ class P115ClientManager:
     DEFAULT_PATH_CACHE_TTL = 3600   # 路径缓存过期时间（秒）
     DEFAULT_MAX_RETRIES = 3         # 最大重试次数
     DEFAULT_JITTER_RATIO = 0.3      # 请求间隔随机抖动比例（±30%）
+    READ_RETRY_ATTEMPTS = 2          # 只读查询最多尝试次数（首次 + 1 次退避重试）
+    READ_RETRY_DELAY = 3.0           # 只读查询首次失败后的基础退避秒数
+    WEB_QUERY_405_LIMIT = 3          # 单轮 Web 查询 405 阈值，达到后熔断
 
     def __init__(
         self,
@@ -220,6 +225,8 @@ class P115ClientManager:
 
         # 分享信息缓存（URL -> {share_code, receive_code}）
         self._share_info_cache: Dict[str, Dict[str, str]] = {}
+        self._web_query_405_count = 0
+        self._web_query_blocked = False
 
         if P115_AVAILABLE and cookies:
             try:
@@ -255,6 +262,63 @@ class P115ClientManager:
             logger.error(f"检查 115 登录状态失败: {e}")
             return False
 
+    @staticmethod
+    def _transient_error_kind(exc: Exception) -> str:
+        """识别可安全重试的只读查询异常，不将真实业务无效响应混入其中。"""
+        text = str(exc or "").lower()
+        if "http error 405" in text or " 405" in text:
+            return "transient_405"
+        if any(f"http error {code}" in text for code in (500, 502, 503, 504)):
+            return "transient_5xx"
+        if any(token in text for token in ("timed out", "timeout", "connection", "temporarily unavailable")):
+            return "transient_network"
+        return ""
+
+    def _mark_web_query_405(self) -> None:
+        """单轮连续 Web 查询 405 到达阈值后熔断，避免无效放大请求。"""
+        self._web_query_405_count += 1
+        if self._web_query_405_count >= self.WEB_QUERY_405_LIMIT and not self._web_query_blocked:
+            self._web_query_blocked = True
+            logger.warning(
+                "115 Web 查询连续出现 HTTP 405，本轮停止后续分享状态和目录读取；"
+                "候选未标记失效，下轮将重新尝试"
+            )
+
+    def _read_query(self, operation: str, func: Callable):
+        """执行幂等只读查询：对临时异常仅退避重试一次，并支持受控 Web 备用接口。"""
+        if self._web_query_blocked:
+            raise RuntimeError("115 Web 查询已在本轮熔断")
+        last_error = None
+        for attempt in range(self.READ_RETRY_ATTEMPTS):
+            try:
+                self.rate_limiter.wait()
+                self._api_call_count += 1
+                result = func()
+                self._web_query_405_count = 0
+                return result
+            except Exception as exc:
+                last_error = exc
+                error_kind = self._transient_error_kind(exc)
+                if error_kind != "transient_405" and not error_kind:
+                    raise
+                if error_kind == "transient_405":
+                    self._mark_web_query_405()
+                if attempt + 1 >= self.READ_RETRY_ATTEMPTS or self._web_query_blocked:
+                    break
+                delay = self.READ_RETRY_DELAY * (attempt + 1)
+                logger.info(f"115 {operation} 查询暂时失败（{error_kind}），{delay:.1f} 秒后重试一次")
+                time.sleep(delay)
+        raise last_error
+
+    def begin_run(self) -> None:
+        """重置仅本轮有效的 Web 查询熔断状态。"""
+        self._web_query_405_count = 0
+        self._web_query_blocked = False
+
+    @property
+    def web_query_blocked(self) -> bool:
+        return self._web_query_blocked
+
     def get_pid_by_path(self, path: str, mkdir: bool = True) -> int:
         """
         通过文件夹路径获取 CID (Directory ID)
@@ -281,17 +345,24 @@ class P115ClientManager:
         if cached_cid is not None:
             return cached_cid
 
-        # 尝试直接通过 API 获取完整路径
         try:
-            self.rate_limiter.wait()
-            self._api_call_count += 1
-            resp = self.client.fs_dir_getid(path)
+            resp = self._read_query("path_id", lambda: self.client.fs_dir_getid(path))
             if resp.get("id"):
                 cid = int(resp["id"])
                 self.path_cache.set(path, cid)
                 return cid
-        except Exception as e:
-            logger.info(f"直接获取路径 ID 失败 ({path}): {e}")
+        except Exception as primary_exc:
+            if self._transient_error_kind(primary_exc) == "transient_405":
+                try:
+                    resp = self._read_query("path_id_fallback", lambda: self.client.fs_dir_getid2(path))
+                    if resp.get("id"):
+                        cid = int(resp["id"])
+                        self.path_cache.set(path, cid)
+                        logger.info(f"备用路径查询成功: {path}")
+                        return cid
+                except Exception as fallback_exc:
+                    logger.info(f"备用路径查询失败 ({path}): {type(fallback_exc).__name__}")
+            logger.info(f"直接获取路径 ID 失败 ({path}): {primary_exc}")
 
         # 如果不创建，则返回失败
         if not mkdir:
@@ -336,18 +407,29 @@ class P115ClientManager:
                     parent_id = cid
                     logger.info(f"创建目录成功: {current_path} -> {cid}")
                 elif resp.get("errno") == 20004 or "已存在" in resp.get("error", ""):
-                    # 目录已存在，尝试获取其 ID
+                    # 目录已存在时复用同一只读查询策略，避免 405 后无法取得 CID。
                     try:
-                        self.rate_limiter.wait()
-                        self._api_call_count += 1
-                        get_resp = self.client.fs_dir_getid(current_path)
+                        get_resp = self._read_query(
+                            "path_id_existing", lambda: self.client.fs_dir_getid(current_path)
+                        )
                         if get_resp.get("id"):
                             cid = int(get_resp["id"])
                             self.path_cache.set(current_path, cid)
                             parent_id = cid
                             continue
-                    except Exception:
-                        pass
+                    except Exception as existing_exc:
+                        if self._transient_error_kind(existing_exc) == "transient_405":
+                            try:
+                                get_resp = self._read_query(
+                                    "path_id_existing_fallback", lambda: self.client.fs_dir_getid2(current_path)
+                                )
+                                if get_resp.get("id"):
+                                    cid = int(get_resp["id"])
+                                    self.path_cache.set(current_path, cid)
+                                    parent_id = cid
+                                    continue
+                            except Exception:
+                                pass
                     logger.error(f"目录已存在但无法获取ID: {current_path}")
                     return -1
                 else:
@@ -410,9 +492,7 @@ class P115ClientManager:
             return status
 
         try:
-            # 使用 share_snap 接口检查分享状态
-            self.rate_limiter.wait()
-            self._api_call_count += 1
+            # 使用 share_snap 接口检查分享状态；405/5xx/网络异常只做一次退避重试。
             payload = {
                 "share_code": share_code,
                 "receive_code": receive_code or "",
@@ -420,7 +500,7 @@ class P115ClientManager:
                 "limit": 1,  # 只获取1条记录，用于验证
                 "offset": 0,
             }
-            resp = self.client.share_snap(payload)
+            resp = self._read_query("share_status", lambda: self.client.share_snap(payload))
 
             # 检查响应状态
             state = resp.get("state")
@@ -469,8 +549,17 @@ class P115ClientManager:
                 logger.info(f"分享链接无效: {status.error_message} (errno: {status.error_code})")
 
         except Exception as e:
-            status.error_message = f"检查分享状态异常: {str(e)}"
-            logger.error(status.error_message)
+            error_kind = self._transient_error_kind(e)
+            if error_kind or self._web_query_blocked:
+                status.is_transient_error = True
+                status.error_kind = error_kind or "transient_405"
+                status.error_message = f"分享状态查询暂时失败: {type(e).__name__}"
+                logger.warning(
+                    f"115 分享状态查询暂时失败（{status.error_kind}），未判定分享失效，本轮暂不处理该候选"
+                )
+            else:
+                status.error_message = f"检查分享状态异常: {type(e).__name__}"
+                logger.error(status.error_message)
 
         return status
 
@@ -490,7 +579,7 @@ class P115ClientManager:
             cid: int = 0,
             max_depth: int = 3,
             target_season: int = None
-    ) -> List[dict]:
+    ) -> Optional[List[dict]]:
         """
         列出分享链接内的文件
 
@@ -511,14 +600,22 @@ class P115ClientManager:
             logger.error("无效的分享链接或解析失败")
             return []
 
-        return self._list_share_files_recursive(
-            share_code=share_code,
-            receive_code=receive_code,
-            cid=cid,
-            depth=1,
-            max_depth=max_depth,
-            target_season=target_season
-        )
+        try:
+            return self._list_share_files_recursive(
+                share_code=share_code,
+                receive_code=receive_code,
+                cid=cid,
+                depth=1,
+                max_depth=max_depth,
+                target_season=target_season
+            )
+        except Exception as exc:
+            error_kind = self._transient_error_kind(exc)
+            if error_kind or self._web_query_blocked:
+                logger.warning("115 分享目录读取暂时失败，未判定为空，本轮暂不处理该候选")
+                return None
+            logger.error(f"列出分享文件失败: {type(exc).__name__}")
+            return None
 
     def _list_share_files_recursive(
             self,
@@ -533,66 +630,68 @@ class P115ClientManager:
         if depth > max_depth:
             return []
 
-        files = []
-        try:
-            # 速率限制
-            self.rate_limiter.wait()
-            self._api_call_count += 1
+        # 每一层目录读取均为只读查询：临时错误向调用层抛出，避免被误认为空分享。
+        # 每次尝试使用独立列表，避免重试时累积重复文件项。
+        def query() -> List[dict]:
+            files: List[dict] = []
+            self._list_share_files_once(share_code, receive_code, cid, depth, max_depth, target_season, files)
+            return files
+        return self._read_query("share_files", query)
 
-            iterator = share_iterdir(
-                self.client,
-                share_code=share_code,
-                receive_code=receive_code,
-                cid=cid,
-                app="web",
-            )
+    def _list_share_files_once(
+            self, share_code: str, receive_code: str, cid: int, depth: int,
+            max_depth: int, target_season: int, files: List[dict]
+    ) -> None:
+        """读取单层分享目录；由 _read_query 统一处理临时失败的重试与熔断。"""
+        iterator = share_iterdir(
+            self.client,
+            share_code=share_code,
+            receive_code=receive_code,
+            cid=cid,
+            app="web",
+        )
 
-            for item in iterator:
-                file_info = {
-                    "id": str(item.get("id", "")),
-                    "name": item.get("name", ""),
-                    "size": item.get("size", 0),
-                    "is_dir": item.get("is_dir", False),
-                    "sha1": item.get("sha1", ""),
-                    "pick_code": item.get("pick_code", ""),
-                }
+        for item in iterator:
+            file_info = {
+                "id": str(item.get("id", "")),
+                "name": item.get("name", ""),
+                "size": item.get("size", 0),
+                "is_dir": item.get("is_dir", False),
+                "sha1": item.get("sha1", ""),
+                "pick_code": item.get("pick_code", ""),
+            }
 
-                # 递归获取子目录内容（带随机延迟）
-                if file_info["is_dir"] and depth < max_depth:
-                    dir_name = file_info["name"]
+            # 递归获取子目录内容（带随机延迟）
+            if file_info["is_dir"] and depth < max_depth:
+                dir_name = file_info["name"]
 
-                    # 优化：如果指定了目标季数，跳过明显不匹配的季目录
-                    if target_season is not None:
-                        skip_dir = self._should_skip_season_dir(dir_name, target_season)
-                        if skip_dir:
-                            logger.info(f"跳过非目标季目录: {dir_name} (目标: S{target_season})")
-                            files.append(file_info)  # 仍然记录目录信息，但不递归
-                            continue
+                # 优化：如果指定了目标季数，跳过明显不匹配的季目录
+                if target_season is not None:
+                    skip_dir = self._should_skip_season_dir(dir_name, target_season)
+                    if skip_dir:
+                        logger.info(f"跳过非目标季目录: {dir_name} (目标: S{target_season})")
+                        files.append(file_info)  # 仍然记录目录信息，但不递归
+                        continue
 
-                    # 递归前增加随机延迟，避免频繁请求
-                    if self.recursion_delay > 0:
-                        import random
-                        jitter = self.recursion_delay * 0.3  # ±30% 随机浮动
-                        delay = self.recursion_delay + random.uniform(-jitter, jitter)
-                        time.sleep(delay)
+                # 递归前增加随机延迟，避免频繁请求
+                if self.recursion_delay > 0:
+                    import random
+                    jitter = self.recursion_delay * 0.3  # ±30% 随机浮动
+                    delay = self.recursion_delay + random.uniform(-jitter, jitter)
+                    time.sleep(delay)
 
-                    sub_cid = int(item.get("id", 0))
-                    children = self._list_share_files_recursive(
-                        share_code=share_code,
-                        receive_code=receive_code,
-                        cid=sub_cid,
-                        depth=depth + 1,
-                        max_depth=max_depth,
-                        target_season=target_season
-                    )
-                    file_info["children"] = children
+                sub_cid = int(item.get("id", 0))
+                children = self._list_share_files_recursive(
+                    share_code=share_code,
+                    receive_code=receive_code,
+                    cid=sub_cid,
+                    depth=depth + 1,
+                    max_depth=max_depth,
+                    target_season=target_season
+                )
+                file_info["children"] = children
 
-                files.append(file_info)
-
-        except Exception as e:
-            logger.error(f"列出分享文件失败: {e}")
-
-        return files
+            files.append(file_info)
 
     def _should_skip_season_dir(self, dir_name: str, target_season: int) -> bool:
         """
