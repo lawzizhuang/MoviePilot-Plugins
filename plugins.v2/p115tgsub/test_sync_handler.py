@@ -186,6 +186,13 @@ def test_progress_plan_rejects_invalid_subscription_range():
     assert SyncHandler._progress_from_confirmed_episodes(subscribe_obj, {1, 2}) is None
 
 
+def test_sync_prioritizes_telegram_candidate_with_missing_episode():
+    resource_old = {"title": "测试剧 (2026) S01E10"}
+    resource_target = {"title": "测试剧 (2026) S01E25"}
+    assert SyncHandler._telegram_resource_matches_missing_episode(resource_target, 1, {25})
+    assert not SyncHandler._telegram_resource_matches_missing_episode(resource_old, 1, {25})
+
+
 if __name__ == "__main__":
     test_single_character_title_is_not_removed_by_normalization()
     test_unrelated_single_character_title_is_rejected()
@@ -198,4 +205,5 @@ if __name__ == "__main__":
     test_progress_plan_only_adds_confirmed_episodes_and_never_regresses()
     test_progress_plan_never_increases_existing_lack_episode()
     test_progress_plan_rejects_invalid_subscription_range()
+    test_sync_prioritizes_telegram_candidate_with_missing_episode()
     print("sync handler tests: OK")

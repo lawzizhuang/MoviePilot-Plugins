@@ -334,7 +334,22 @@ class TelegramWebClient:
         actual = compact(text)
         return bool(expected) and expected in actual
 
-    def search_messages(self, channel: str, keyword: str, required_title: str = "") -> List[TelegramMessage]:
+    @staticmethod
+    def _message_matches_episodes(message: TelegramMessage, season: int, episodes: Sequence[int]) -> bool:
+        """仅用于候选排序：优先保留标题明确标注待补季集的消息。"""
+        targets = {int(episode) for episode in episodes or [] if str(episode).isdigit() and int(episode) > 0}
+        if not targets:
+            return False
+        text = unicodedata.normalize("NFKC", str(message.text or ""))
+        for episode in targets:
+            if re.search(rf"[Ss]\s*0*{int(season)}\s*[Ee]\s*0*{episode}(?!\d)", text, re.IGNORECASE):
+                return True
+            if re.search(rf"第\s*0*{episode}\s*[集话話](?!\d)", text, re.IGNORECASE):
+                return True
+        return False
+
+    def search_messages(self, channel: str, keyword: str, required_title: str = "",
+                        preferred_season: int = 0, preferred_episodes: Sequence[int] = ()) -> List[TelegramMessage]:
         """从一个公开频道的搜索页面提取消息；不执行 Telegraph 二跳。"""
         channel = self.normalize_channels([channel])[0] if self.normalize_channels([channel]) else ""
         keyword = str(keyword or "").strip()
@@ -355,8 +370,8 @@ class TelegramWebClient:
             return []
 
         messages: List[TelegramMessage] = []
-        # 应先按订阅标题过滤，再应用每频道消息上限；否则“夜王 2026”这类查询会被
-        # “昨夜将至 (2026)”等无关结果占满，后续频道或正确消息没有机会进入校验。
+        # 先按订阅标题过滤；若当前有明确待补集数，再将对应单集消息提前，避免
+        # 旧连载集占满“每频道最多检查消息数”而漏掉后续新集。
         for raw in parser.messages:
             post = str(raw.get("post") or "")
             message_id = post.rsplit("/", 1)[-1] if "/" in post else ""
@@ -374,9 +389,13 @@ class TelegramWebClient:
             if required_title and not self._message_matches_title(message, required_title):
                 continue
             messages.append(message)
-            if len(messages) >= self.max_results_per_channel:
-                break
-        return messages
+        if preferred_episodes:
+            messages.sort(
+                key=lambda message: not self._message_matches_episodes(
+                    message, int(preferred_season or 1), preferred_episodes
+                )
+            )
+        return messages[:self.max_results_per_channel]
 
     def _extract_telegraph_page(self, url: str, kind: str) -> Tuple[List[str], str]:
         page = self._get(url)
@@ -430,15 +449,17 @@ class TelegramWebClient:
             password = password_match.group(1) if password_match else ""
         return match.group(1).casefold(), password.casefold()
 
-    def search_115_resources(self, keyword: str, required_title: str = "") -> List[Dict[str, str]]:
+    def search_115_resources(self, keyword: str, required_title: str = "", preferred_season: int = 0,
+                             preferred_episodes: Sequence[int] = ()) -> List[Dict[str, str]]:
         """搜索所有已配置频道，返回标题已初筛的 115 资源格式。"""
-        return self._search_links(keyword, required_title, "115")
+        return self._search_links(keyword, required_title, "115", preferred_season, preferred_episodes)
 
     def search_quark_resources(self, keyword: str, required_title: str = "") -> List[Dict[str, str]]:
         """搜索所有已配置频道，返回标题已初筛的 pan.quark.cn 资源格式。"""
         return self._search_links(keyword, required_title, "quark")
 
-    def search_offline_resources(self, keyword: str, required_title: str = "") -> List[Dict[str, str]]:
+    def search_offline_resources(self, keyword: str, required_title: str = "", preferred_season: int = 0,
+                                 preferred_episodes: Sequence[int] = ()) -> List[Dict[str, str]]:
         """只搜索 Telegram 公开消息正文中直接发布的 ED2K / 磁力候选。"""
         if not self.channels:
             return []
@@ -447,7 +468,10 @@ class TelegramWebClient:
         requested_channels = 0
         for channel in self.channels:
             requested_channels += 1
-            messages = self.search_messages(channel, keyword, required_title=required_title)
+            messages = self.search_messages(
+                channel, keyword, required_title=required_title,
+                preferred_season=preferred_season, preferred_episodes=preferred_episodes,
+            )
             if not messages:
                 continue
             for message in messages:
@@ -491,7 +515,8 @@ class TelegramWebClient:
         logger.info(f"Telegram 公开频道 {normalized[0]} 搜索“{keyword}”完成，找到 {len(results)} 个 SeedHub 页面")
         return results
 
-    def _search_links(self, keyword: str, required_title: str, kind: str) -> List[Dict[str, str]]:
+    def _search_links(self, keyword: str, required_title: str, kind: str, preferred_season: int = 0,
+                      preferred_episodes: Sequence[int] = ()) -> List[Dict[str, str]]:
         """按资源类型（115/quark）搜索全部频道并返回候选。"""
         if not self.channels:
             logger.warning("Telegram 搜索源未配置公开频道")
@@ -505,7 +530,10 @@ class TelegramWebClient:
         seen_keys = set()
         for channel in self.channels:
             requested_channels += 1
-            messages = self.search_messages(channel, keyword, required_title=required_title)
+            messages = self.search_messages(
+                channel, keyword, required_title=required_title,
+                preferred_season=preferred_season, preferred_episodes=preferred_episodes,
+            )
             if not messages:
                 logger.info(f"Telegram 频道 {channel} 未找到关键词“{keyword}”的消息")
                 continue

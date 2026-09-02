@@ -133,6 +133,29 @@ def test_title_filter_runs_before_result_limit():
     assert [item["url"] for item in results] == ["https://115.com/s/right"]
 
 
+def test_preferred_episode_is_prioritized_before_channel_limit():
+    search_url = "https://t.me/s/QukanMovie?q=%E5%B8%88%E5%85%84%E5%A4%AA%E7%A8%B3%E5%81%A5%202026"
+    old_messages = "".join(
+        f'''<div class="tgme_widget_message" data-post="QukanMovie/{episode}">
+          <div class="tgme_widget_message_text">师兄太稳健 (2026) S01E{episode:02d} <a href="https://115.com/s/old{episode}">链接</a></div>
+        </div>'''
+        for episode in range(6, 16)
+    )
+    target_message = '''<div class="tgme_widget_message" data-post="QukanMovie/25">
+      <div class="tgme_widget_message_text">师兄太稳健 (2026) S01E25 <a href="https://115.com/s/target25">链接</a></div>
+    </div>'''
+    client = TelegramWebClient(["QukanMovie"], max_results_per_channel=10)
+    client._session = _Session({search_url: old_messages + target_message})
+
+    results = client.search_115_resources(
+        "师兄太稳健 2026", required_title="师兄太稳健", preferred_season=1, preferred_episodes=[25]
+    )
+
+    assert results[0]["message_id"] == "25"
+    assert results[0]["url"] == "https://115.com/s/target25"
+    assert len(results) == 10
+
+
 def test_quark_links_are_extracted_and_password_in_text():
     search_url = "https://t.me/s/QukanMovie?q=%E4%B8%89%E4%BD%93"
     search_html = '''
@@ -247,6 +270,7 @@ if __name__ == "__main__":
     test_mixed_cloud_links_only_keep_115()
     test_parser_keeps_multiple_messages_with_void_tags()
     test_title_filter_runs_before_result_limit()
+    test_preferred_episode_is_prioritized_before_channel_limit()
     test_quark_links_are_extracted_and_password_in_text()
     test_quark_url_with_query_password()
     test_direct_ed2k_and_magnet_are_extracted_from_message_body()

@@ -194,10 +194,13 @@ class SyncHandler:
             logger.info(f"115 离线下载文件已确认存在：{len(completed)} 集")
         return pending - completed_episodes
 
-    def _search_offline_resources(self, mediainfo: MediaInfo, media_type: MediaType, season: int = None) -> List[Dict[str, Any]]:
+    def _search_offline_resources(self, mediainfo: MediaInfo, media_type: MediaType, season: int = None,
+                                  preferred_episodes: Optional[List[int]] = None) -> List[Dict[str, Any]]:
         if not self._offline_enabled:
             return []
-        return self._search_handler.search_offline_resources(mediainfo, media_type, season)
+        return self._search_handler.search_offline_resources(
+            mediainfo, media_type, season, preferred_episodes=preferred_episodes
+        )
 
     @staticmethod
     def _seedhub_episode_range(title: str, season: int) -> Set[int]:
@@ -381,6 +384,18 @@ class SyncHandler:
             if self._submit_seedhub_offline(
                 resource, subscribe, mediainfo, save_dir, "电视剧", season, covered, subscribe_filter
             ):
+                return True
+        return False
+
+    @staticmethod
+    def _telegram_resource_matches_missing_episode(resource: Dict[str, Any], season: int,
+                                                   episodes: Set[int]) -> bool:
+        """根据公开消息标题判断是否明确标注当前待补季集，仅用于候选优先级。"""
+        text = unicodedata.normalize("NFKC", str(resource.get("title") or resource.get("text") or ""))
+        for episode in episodes:
+            if re.search(rf"[Ss]\s*0*{int(season)}\s*[Ee]\s*0*{int(episode)}(?!\d)", text, re.IGNORECASE):
+                return True
+            if re.search(rf"第\s*0*{int(episode)}\s*[集话話](?!\d)", text, re.IGNORECASE):
                 return True
         return False
 
@@ -1107,11 +1122,14 @@ class SyncHandler:
                     source=source,
                     mediainfo=mediainfo,
                     media_type=MediaType.TV,
-                    season=season
+                    season=season,
+                    preferred_episodes=missing_episodes,
                 )
 
                 if not p115_results:
-                    offline_results = self._search_offline_resources(mediainfo, MediaType.TV, season)
+                    offline_results = self._search_offline_resources(
+                        mediainfo, MediaType.TV, season, preferred_episodes=missing_episodes
+                    )
                     submitted = 0
                     for resource in offline_results:
                         if self._offline_submitted_this_run >= self._offline_max_per_sync or not missing_episodes:
@@ -1140,6 +1158,18 @@ class SyncHandler:
                     continue
 
                 logger.info(f"[{source.upper()}] 找到 {len(p115_results)} 个 115 网盘资源")
+                preferred_set = set(missing_episodes)
+                preferred_resources = [
+                    resource for resource in p115_results
+                    if self._telegram_resource_matches_missing_episode(resource, season, preferred_set)
+                ]
+                if preferred_resources:
+                    logger.info(
+                        f"[{source.upper()}] 优先检查 {len(preferred_resources)} 个明确命中待补集的候选"
+                    )
+                    p115_results = preferred_resources + [
+                        resource for resource in p115_results if resource not in preferred_resources
+                    ]
 
                 # 遍历搜索结果
                 for resource in p115_results:
