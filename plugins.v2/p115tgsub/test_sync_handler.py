@@ -193,6 +193,14 @@ def test_sync_prioritizes_telegram_candidate_with_missing_episode():
     assert not SyncHandler._telegram_resource_matches_missing_episode(resource_old, 1, {25})
 
 
+def test_tmdb_unreleased_metadata_never_blocks_episode_search_contract():
+    source_root = Path(__file__).parent / "handlers"
+    for path in (source_root / "sync.py", source_root / "quark_sync.py"):
+        source = path.read_text(encoding="utf8")
+        assert "TmdbChain" not in source
+        assert "所有缺失剧集均未播出" not in source
+
+
 if __name__ == "__main__":
     test_single_character_title_is_not_removed_by_normalization()
     test_unrelated_single_character_title_is_rejected()
@@ -206,4 +214,5 @@ if __name__ == "__main__":
     test_progress_plan_never_increases_existing_lack_episode()
     test_progress_plan_rejects_invalid_subscription_range()
     test_sync_prioritizes_telegram_candidate_with_missing_episode()
+    test_tmdb_unreleased_metadata_never_blocks_episode_search_contract()
     print("sync handler tests: OK")

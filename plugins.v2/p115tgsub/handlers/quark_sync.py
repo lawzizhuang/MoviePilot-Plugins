@@ -233,20 +233,8 @@ class QuarkSyncHandler:
         if getattr(subscribe, "start_episode", None):
             missing_episodes = [ep for ep in missing_episodes if ep >= subscribe.start_episode]
 
-        if missing_episodes and mediainfo.tmdb_id:
-            try:
-                from app.chain.tmdb import TmdbChain
-                tmdb_episodes = TmdbChain().tmdb_episodes(tmdbid=mediainfo.tmdb_id, season=season)
-                if tmdb_episodes:
-                    today = datetime.date.today().isoformat()
-                    aired = {
-                        ep.episode_number for ep in tmdb_episodes
-                        if ep.episode_number and ep.air_date and ep.air_date <= today
-                    }
-                    if aired:
-                        missing_episodes = [ep for ep in missing_episodes if ep in aired]
-            except Exception as exc:
-                logger.warning(f"{mediainfo.title_year} S{season} 查询 TMDB 播出日期失败：{exc}")
+        # TMDB 播出日期仅作元数据参考，超前点映或元数据滞后时仍应允许夸克兜底
+        # 检索；最终是否接收资源仍由严格季集、标题和文件匹配决定。
         return False, missing_episodes
 
     # ---------------- 电影订阅 ----------------

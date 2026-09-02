@@ -61,10 +61,14 @@ p115client==0.0.9.6.5.1
 ```text
 插件 ID：P115TGSub
 目录：plugins.v2/p115tgsub/
-版本：2.4.0
+版本：2.4.5
 ```
 
 面向“资源直接发布在 Telegram 公开频道”及 4K Monitor 匿名免费资源的订阅追更场景。插件自行访问 Telegram 公开搜索页和按 TMDB ID 的 4K Monitor 公开资源页，不调用 CloudSaver API，也不保存 CloudSaver 的地址、JWT 或账号密码。
+
+### v2.4.5
+
+- **超前点映追更**：TMDB 播出日期只作元数据参考，不再阻断 Telegram、115 和夸克的候选检索；资源仍必须通过标题、季集和分享目录文件严格校验。
 
 ### v2.4.4
 

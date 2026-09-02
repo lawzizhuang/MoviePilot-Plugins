@@ -1059,35 +1059,8 @@ class SyncHandler:
             if not missing_episodes:
                 return transferred_count
 
-            # 过滤掉尚未播出的剧集，避免浪费搜索和解锁资源
-            if mediainfo.tmdb_id:
-                try:
-                    from app.chain.tmdb import TmdbChain
-                    tmdb_episodes = TmdbChain().tmdb_episodes(
-                        tmdbid=mediainfo.tmdb_id, season=season
-                    )
-                    if tmdb_episodes:
-                        today = datetime.date.today().isoformat()
-                        aired_episodes = set()
-                        for ep in tmdb_episodes:
-                            if ep.air_date and ep.air_date <= today and ep.episode_number:
-                                aired_episodes.add(ep.episode_number)
-                        if aired_episodes:
-                            not_aired = [ep for ep in missing_episodes if ep not in aired_episodes]
-                            if not_aired:
-                                missing_episodes = [ep for ep in missing_episodes if ep in aired_episodes]
-                                logger.info(
-                                    f"{mediainfo.title_year} S{season} 跳过 {len(not_aired)} 集未播出剧集：{not_aired}"
-                                )
-                                if not missing_episodes:
-                                    logger.info(f"{mediainfo.title_year} S{season} 所有缺失剧集均未播出，跳过")
-                                    return transferred_count
-                        else:
-                            logger.info(f"{mediainfo.title_year} S{season} TMDB剧集播出日期数据为空，跳过播出过滤")
-                    else:
-                        logger.info(f"{mediainfo.title_year} S{season} TMDB未返回剧集信息，跳过播出过滤")
-                except Exception as e:
-                    logger.warning(f"{mediainfo.title_year} S{season} 查询TMDB剧集播出日期失败：{e}，将继续处理所有缺失剧集")
+            # TMDB 播出日期仅作元数据参考，不能作为追更前置条件：超前点映、会员抢先看
+            # 或元数据滞后时，公开频道可能已存在可严格匹配的资源。
 
             logger.info(f"{mediainfo.title_year} S{season} 待转存剧集：{missing_episodes}")
 
