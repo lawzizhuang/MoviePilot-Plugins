@@ -40,13 +40,16 @@ class SearchHandler:
         mediainfo: MediaInfo,
         media_type: MediaType,
         season: Optional[int] = None,
+        prefer_recent: bool = False,
     ) -> List[Dict[str, Any]]:
         """搜索夸克分享候选（115 优先策略的兜底源）。"""
         if not self._telegram_enabled or not self._telegram_client:
             return []
         for keyword in self._build_keywords(mediainfo, media_type, season):
             logger.info(f"使用 Telegram 公开频道搜索夸克资源：{mediainfo.title}，关键词：{keyword!r}")
-            results = self._telegram_client.search_quark_resources(keyword, required_title=mediainfo.title)
+            results = self._telegram_client.search_quark_resources(
+                keyword, required_title=mediainfo.title, prefer_recent=prefer_recent
+            )
             if results:
                 logger.info(f"Telegram 关键词 {keyword!r} 找到 {len(results)} 个夸克资源")
                 return results
@@ -78,6 +81,7 @@ class SearchHandler:
         mediainfo: MediaInfo,
         media_type: MediaType,
         season: Optional[int] = None,
+        prefer_recent: bool = False,
     ) -> List[Dict[str, Any]]:
         """经指定 SeedHub Telegram 公开频道定位电影页，再读取公开磁力候选。"""
         if not self._seedhub_enabled or not self._seedhub_client or not self._telegram_enabled or not self._telegram_client:
@@ -89,7 +93,8 @@ class SearchHandler:
                 break
             logger.info(f"使用 SeedHub 公开频道搜索磁力资源：{mediainfo.title}，关键词：{keyword!r}")
             pages = self._telegram_client.search_seedhub_movie_pages(
-                keyword, required_title=mediainfo.title, channel=self._seedhub_channel
+                keyword, required_title=mediainfo.title, channel=self._seedhub_channel,
+                prefer_recent=prefer_recent,
             )
             for page in pages:
                 if getattr(self._seedhub_client, "blocked", False):
@@ -157,6 +162,7 @@ class SearchHandler:
         media_type: MediaType,
         season: Optional[int] = None,
         preferred_episodes: Optional[List[int]] = None,
+        prefer_recent: bool = False,
     ) -> List[Dict[str, Any]]:
         if source == "4kmonitor":
             return []
@@ -170,12 +176,30 @@ class SearchHandler:
             logger.info(f"使用 Telegram 公开频道搜索：{mediainfo.title}，关键词：{keyword!r}")
             results = self._telegram_client.search_115_resources(
                 keyword, required_title=mediainfo.title, preferred_season=int(season or 1),
-                preferred_episodes=preferred_episodes or (),
+                preferred_episodes=preferred_episodes or (), prefer_recent=prefer_recent,
             )
             if results:
                 logger.info(f"Telegram 关键词 {keyword!r} 找到 {len(results)} 个 115 资源")
                 return results
         return []
+
+    @staticmethod
+    def is_followup_tv(
+        existing_episodes, missing_episodes, start_episode: int = 1, total_episode: int = 0,
+    ) -> bool:
+        """仅将“已完整拥有前序集、连续缺少季末集”的场景视为追更。"""
+        try:
+            existing = {int(episode) for episode in existing_episodes if int(episode) > 0}
+            missing = sorted({int(episode) for episode in missing_episodes if int(episode) > 0})
+            start = max(1, int(start_episode or 1))
+            total = int(total_episode or 0)
+        except (TypeError, ValueError):
+            return False
+        if not existing or not missing or missing != list(range(missing[0], missing[-1] + 1)):
+            return False
+        if total and missing[-1] != total:
+            return False
+        return missing[0] > start and set(range(start, missing[0])).issubset(existing)
 
     @staticmethod
     def _build_keywords(

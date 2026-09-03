@@ -265,6 +265,42 @@ def test_search_logs_all_configured_channel_requests():
     assert session.calls == [first_url, second_url]
 
 
+def test_followup_results_use_newest_messages_before_channel_limit():
+    search_url = "https://t.me/s/QukanMovie?q=%E5%B8%88%E5%85%84%E5%A4%AA%E7%A8%B3%E5%81%A5%202026"
+    messages = "".join(
+        f'''<div class="tgme_widget_message" data-post="QukanMovie/{episode}">
+          <div class="tgme_widget_message_text">师兄太稳健 (2026) S01E{episode:02d} <a href="https://115.com/s/{episode}">链接</a></div>
+          <time datetime="2026-08-{episode:02d}T00:00:00+00:00"></time>
+        </div>'''
+        for episode in range(6, 16)
+    )
+    client = TelegramWebClient(["QukanMovie"], max_results_per_channel=3)
+    client._session = _Session({search_url: messages})
+
+    results = client.search_115_resources(
+        "师兄太稳健 2026", required_title="师兄太稳健", prefer_recent=True
+    )
+
+    assert [item["message_id"] for item in results] == ["15", "14", "13"]
+
+
+def test_backfill_results_keep_telegram_order_for_historical_resources():
+    search_url = "https://t.me/s/QukanMovie?q=%E5%B8%88%E5%85%84%E5%A4%AA%E7%A8%B3%E5%81%A5%202026"
+    messages = "".join(
+        f'''<div class="tgme_widget_message" data-post="QukanMovie/{episode}">
+          <div class="tgme_widget_message_text">师兄太稳健 (2026) S01E{episode:02d} <a href="https://115.com/s/{episode}">链接</a></div>
+          <time datetime="2026-08-{episode:02d}T00:00:00+00:00"></time>
+        </div>'''
+        for episode in range(6, 16)
+    )
+    client = TelegramWebClient(["QukanMovie"], max_results_per_channel=3)
+    client._session = _Session({search_url: messages})
+
+    results = client.search_115_resources("师兄太稳健 2026", required_title="师兄太稳健")
+
+    assert [item["message_id"] for item in results] == ["6", "7", "8"]
+
+
 if __name__ == "__main__":
     test_direct_and_telegraph_115_links_are_extracted()
     test_mixed_cloud_links_only_keep_115()
@@ -279,4 +315,6 @@ if __name__ == "__main__":
     test_telegraph_quark_link_and_access_code_are_extracted()
     test_single_character_title_can_follow_telegraph()
     test_search_logs_all_configured_channel_requests()
+    test_followup_results_use_newest_messages_before_channel_limit()
+    test_backfill_results_keep_telegram_order_for_historical_resources()
     print("telegram_web parser tests: OK")

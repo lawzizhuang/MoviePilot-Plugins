@@ -179,12 +179,14 @@ handlers.StrmQueue = strm_queue_mod.StrmQueue
 
 
 class FakeSearchHandler:
+    is_followup_tv = staticmethod(lambda *args, **kwargs: False)
+
     def __init__(self, candidates=None):
         self.candidates = candidates or []
         self.searches = []
 
-    def search_quark_resources(self, mediainfo, media_type, season=None):
-        self.searches.append((mediainfo.title, media_type, season))
+    def search_quark_resources(self, mediainfo, media_type, season=None, prefer_recent=False):
+        self.searches.append((mediainfo.title, media_type, season, prefer_recent))
         return list(self.candidates)
 
 

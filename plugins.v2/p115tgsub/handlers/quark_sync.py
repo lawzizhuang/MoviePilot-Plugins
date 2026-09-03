@@ -536,10 +536,23 @@ class QuarkSyncHandler:
                 logger.info(f"{mediainfo.title_year} S{season} 所有缺失剧集已由 115/夸克补齐，夸克链路跳过")
                 return transferred_count
 
+            prefer_recent = self._search_handler.is_followup_tv(
+                all_existing,
+                missing_episodes,
+                start_episode=getattr(subscribe, "start_episode", 1),
+                total_episode=getattr(subscribe, "total_episode", 0),
+            )
+            if prefer_recent:
+                logger.info(
+                    f"{mediainfo.title_year} S{season} 识别为连续尾集追更，"
+                    "夸克候选将按最新发布时间优先"
+                )
+
             logger.info(f"{mediainfo.title_year} S{season} 夸克待转存剧集：{missing_episodes}")
 
             quark_results = self._search_handler.search_quark_resources(
-                mediainfo=mediainfo, media_type=MediaType.TV, season=season
+                mediainfo=mediainfo, media_type=MediaType.TV, season=season,
+                prefer_recent=prefer_recent,
             )
             if not quark_results:
                 logger.info(f"未找到 {mediainfo.title} S{season} 的夸克网盘资源")

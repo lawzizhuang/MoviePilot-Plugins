@@ -195,11 +195,13 @@ class SyncHandler:
         return pending - completed_episodes
 
     def _search_offline_resources(self, mediainfo: MediaInfo, media_type: MediaType, season: int = None,
-                                  preferred_episodes: Optional[List[int]] = None) -> List[Dict[str, Any]]:
+                                  preferred_episodes: Optional[List[int]] = None,
+                                  prefer_recent: bool = False) -> List[Dict[str, Any]]:
         if not self._offline_enabled:
             return []
         return self._search_handler.search_offline_resources(
-            mediainfo, media_type, season, preferred_episodes=preferred_episodes
+            mediainfo, media_type, season, preferred_episodes=preferred_episodes,
+            prefer_recent=prefer_recent,
         )
 
     @staticmethod
@@ -1062,6 +1064,18 @@ class SyncHandler:
             # TMDB 播出日期仅作元数据参考，不能作为追更前置条件：超前点映、会员抢先看
             # 或元数据滞后时，公开频道可能已存在可严格匹配的资源。
 
+            prefer_recent = self._search_handler.is_followup_tv(
+                library_episodes | all_existing,
+                missing_episodes,
+                start_episode=getattr(subscribe, "start_episode", 1),
+                total_episode=getattr(subscribe, "total_episode", 0),
+            )
+            if prefer_recent:
+                logger.info(
+                    f"{mediainfo.title_year} S{season} 识别为连续尾集追更，"
+                    "Telegram 候选将按最新发布时间优先"
+                )
+
             logger.info(f"{mediainfo.title_year} S{season} 待转存剧集：{missing_episodes}")
 
             # 创建订阅过滤条件
@@ -1103,11 +1117,13 @@ class SyncHandler:
                     media_type=MediaType.TV,
                     season=season,
                     preferred_episodes=missing_episodes,
+                    prefer_recent=prefer_recent,
                 )
 
                 if not p115_results:
                     offline_results = self._search_offline_resources(
-                        mediainfo, MediaType.TV, season, preferred_episodes=missing_episodes
+                        mediainfo, MediaType.TV, season, preferred_episodes=missing_episodes,
+                        prefer_recent=prefer_recent,
                     )
                     submitted = 0
                     for resource in offline_results:
@@ -1362,7 +1378,10 @@ class SyncHandler:
                 # 当前源处理完成；115 分享未补齐时再尝试 Telegram 正文直链 ED2K/磁力。
                 if missing_episodes and self._offline_submitted_this_run < self._offline_max_per_sync:
                     submitted = 0
-                    for resource in self._search_offline_resources(mediainfo, MediaType.TV, season):
+                    for resource in self._search_offline_resources(
+                        mediainfo, MediaType.TV, season, preferred_episodes=missing_episodes,
+                        prefer_recent=prefer_recent,
+                    ):
                         if self._offline_submitted_this_run >= self._offline_max_per_sync or not missing_episodes:
                             break
                         for episode in missing_episodes[:]:

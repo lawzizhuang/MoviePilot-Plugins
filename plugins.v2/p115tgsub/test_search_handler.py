@@ -47,7 +47,15 @@ def test_tv_many_missing_episodes_uses_generic_keywords_only():
     ]
 
 
+def test_followup_tv_requires_contiguous_tail_after_existing_prefix():
+    assert SearchHandler.is_followup_tv({1, 2, 3, 4, 5}, [6, 7, 8], start_episode=1, total_episode=8)
+    assert not SearchHandler.is_followup_tv(set(), [1, 2, 3], start_episode=1, total_episode=3)
+    assert not SearchHandler.is_followup_tv({1, 2, 3}, [5, 6], start_episode=1, total_episode=6)
+    assert not SearchHandler.is_followup_tv({1, 2, 3, 4, 5}, [6, 7], start_episode=1, total_episode=8)
+
+
 if __name__ == "__main__":
     test_tv_missing_episode_keywords_are_prioritized()
     test_tv_many_missing_episodes_uses_generic_keywords_only()
+    test_followup_tv_requires_contiguous_tail_after_existing_prefix()
     print("p115tgsub search handler tests: OK")
