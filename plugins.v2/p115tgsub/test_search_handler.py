@@ -54,8 +54,28 @@ def test_followup_tv_requires_contiguous_tail_after_existing_prefix():
     assert not SearchHandler.is_followup_tv({1, 2, 3, 4, 5}, [6, 7], start_episode=1, total_episode=8)
 
 
+class _TelegramClient:
+    def __init__(self):
+        self.calls = []
+
+    def search_offline_resources(self, *args, **kwargs):
+        self.calls.append((args, kwargs))
+        return []
+
+
+def test_offline_search_accepts_and_forwards_recent_preference():
+    client = _TelegramClient()
+    handler = SearchHandler(client, telegram_enabled=True)
+    media = types.SimpleNamespace(title="测试剧", year="2026")
+
+    assert handler.search_offline_resources(
+        media, MediaType.TV, 1, preferred_episodes=[8], prefer_recent=True
+    ) == []
+    assert client.calls[0][1]["prefer_recent"] is True
+
+
 if __name__ == "__main__":
     test_tv_missing_episode_keywords_are_prioritized()
     test_tv_many_missing_episodes_uses_generic_keywords_only()
-    test_followup_tv_requires_contiguous_tail_after_existing_prefix()
+    test_offline_search_accepts_and_forwards_recent_preference()
     print("p115tgsub search handler tests: OK")

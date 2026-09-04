@@ -61,6 +61,7 @@ class SearchHandler:
         media_type: MediaType,
         season: Optional[int] = None,
         preferred_episodes: Optional[List[int]] = None,
+        prefer_recent: bool = False,
     ) -> List[Dict[str, Any]]:
         """搜索 Telegram 公开消息直接发布的 ED2K / 磁力候选。"""
         if not self._telegram_enabled or not self._telegram_client:
@@ -69,7 +70,7 @@ class SearchHandler:
             logger.info(f"使用 Telegram 公开频道搜索 115 离线资源：{mediainfo.title}，关键词：{keyword!r}")
             results = self._telegram_client.search_offline_resources(
                 keyword, required_title=mediainfo.title, preferred_season=int(season or 1),
-                preferred_episodes=preferred_episodes or (),
+                preferred_episodes=preferred_episodes or (), prefer_recent=prefer_recent,
             )
             if results:
                 logger.info(f"Telegram 关键词 {keyword!r} 找到 {len(results)} 个 ED2K/磁力候选")
