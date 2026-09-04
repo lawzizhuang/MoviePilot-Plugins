@@ -301,6 +301,26 @@ def test_backfill_results_keep_telegram_order_for_historical_resources():
     assert [item["message_id"] for item in results] == ["6", "7", "8"]
 
 
+def test_title_filter_ignores_plot_description_keyword():
+    search_url = "https://t.me/s/Lsp115?q=%E6%96%B0%E4%B8%96%E7%95%8C"
+    search_html = '''
+    <div class="tgme_widget_message_wrap"><div class="tgme_widget_message" data-post="Lsp115/1">
+      <div class="tgme_widget_message_text">🎭 凡人修仙传 (2020) S01E189 📝 简介：韩立得知了一个全新世界：修仙界的存在。<a href="https://115.com/s/wrong">资源</a></div>
+    </div></div>
+    <div class="tgme_widget_message_wrap"><div class="tgme_widget_message" data-post="Lsp115/2">
+      <div class="tgme_widget_message_text">🎬 新世界 (2013) 1080p <a href="https://115.com/s/right">资源</a></div>
+    </div></div>
+    '''
+    client = TelegramWebClient(["Lsp115"], max_results_per_channel=10)
+    client._session = _Session({search_url: search_html})
+
+    results = client.search_115_resources("新世界", required_title="新世界")
+
+    assert [item["message_id"] for item in results] == ["2"]
+    assert "新世界" in results[0]["title"]
+    assert "简介" not in results[0]["title"]
+
+
 if __name__ == "__main__":
     test_direct_and_telegraph_115_links_are_extracted()
     test_mixed_cloud_links_only_keep_115()
@@ -317,4 +337,5 @@ if __name__ == "__main__":
     test_search_logs_all_configured_channel_requests()
     test_followup_results_use_newest_messages_before_channel_limit()
     test_backfill_results_keep_telegram_order_for_historical_resources()
+    test_title_filter_ignores_plot_description_keyword()
     print("telegram_web parser tests: OK")

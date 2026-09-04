@@ -23,6 +23,7 @@ class TelegramMessage:
     message_id: str
     message_url: str
     text: str
+    title_text: str = ""
     published_at: str = ""
     links: List[str] = field(default_factory=list)
     telegraph_links: List[str] = field(default_factory=list)
@@ -316,10 +317,20 @@ class TelegramWebClient:
         return f"https://t.me/{channel}/{message_id}" if message_id else f"https://t.me/{channel}"
 
     @staticmethod
+    def _message_title_text(text: str) -> str:
+        """提取 Telegram 资源标题区，排除简介/描述等正文，避免正文词汇误作片名。"""
+        value = " ".join(str(text or "").split()).strip()
+        if not value:
+            return ""
+        # 常见发布模板均在资源标题后以“简介/描述”开始长正文；仅以前段作为候选标题。
+        marker = re.search(r"(?:📝\s*)?(?:简介|描述|剧情简介)\s*[：:]", value, re.IGNORECASE)
+        return value[:marker.start()].strip() if marker else value
+
+    @staticmethod
     def _message_matches_title(message: TelegramMessage, required_title: str) -> bool:
         """仅保留明确包含订阅标题的消息，避免宽泛搜索词被无关年份结果占满。"""
         title = str(required_title or "").strip()
-        text = str(message.text or "").strip()
+        text = str(message.title_text or message.text or "").strip()
         if not title:
             return True
         if not text:
@@ -383,6 +394,7 @@ class TelegramWebClient:
                 message_id=message_id,
                 message_url=self._message_url(channel, post),
                 text=text,
+                title_text=self._message_title_text(text),
                 published_at=str(raw.get("published_at") or ""),
                 links=links,
                 telegraph_links=self._extract_telegraph_urls(links),
@@ -490,7 +502,7 @@ class TelegramWebClient:
                     seen.add(key)
                     self._search_stats["raw_candidates"] += 1
                     results.append({
-                        "url": url, "title": message.text or keyword, "text": message.text or "",
+                        "url": url, "title": message.title_text or message.text or keyword, "text": message.text or "",
                         "update_time": message.published_at, "channel": message.channel,
                         "message_id": message.message_id, "message_url": message.message_url,
                         "kind": "ed2k" if url.casefold().startswith("ed2k:") else "magnet",
@@ -518,7 +530,7 @@ class TelegramWebClient:
                 seen.add(movie_url.casefold())
                 self._search_stats["raw_candidates"] += 1
                 results.append({
-                    "url": movie_url, "title": message.text or keyword, "text": message.text or "",
+                    "url": movie_url, "title": message.title_text or message.text or keyword, "text": message.text or "",
                     "update_time": message.published_at, "channel": message.channel,
                     "message_id": message.message_id, "message_url": message.message_url,
                     "kind": "seedhub_movie",
@@ -587,7 +599,7 @@ class TelegramWebClient:
                     seen_keys.add(dedup_key)
                     results.append({
                         "url": normalized_url,
-                        "title": message.text or keyword,
+                        "title": message.title_text or message.text or keyword,
                         "update_time": message.published_at,
                         "channel": message.channel,
                         "message_id": message.message_id,

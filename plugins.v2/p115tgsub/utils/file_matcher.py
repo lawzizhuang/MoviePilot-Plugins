@@ -333,6 +333,18 @@ class FileMatcher:
         return None
 
     @staticmethod
+    def _movie_path_matches_title(path_parts: List[str], title: str) -> bool:
+        """电影候选的文件名或所在资源目录必须明确包含目标片名。"""
+        expected = re.sub(r"[\s\W_]+", "", str(title or "").casefold())
+        if not expected:
+            return False
+        for part in path_parts:
+            actual = re.sub(r"[\s\W_]+", "", str(part or "").casefold())
+            if expected in actual:
+                return True
+        return False
+
+    @staticmethod
     def match_movie_file(
         files: List[dict],
         title: str,
@@ -348,25 +360,32 @@ class FileMatcher:
         :param subscribe_filter: 订阅过滤条件（质量、分辨率、特效）
         :return: 匹配的文件信息
         """
-        # 候选列表：(file, filter_score)
+        # 候选列表：(file, filter_score)。电影不能仅因“是最大的文件”而被接收：
+        # 文件名或其资源目录必须明确含有订阅片名，防止简介关键词命中后错片转存。
         candidates = []
         min_size_bytes = min_size_mb * 1024 * 1024
 
-        def collect_video_files(file_list: List[dict]):
-            """递归收集所有视频文件"""
+        def collect_video_files(file_list: List[dict], parent_parts: List[str] = None):
+            """递归收集身份已验证的视频文件。"""
+            parent_parts = parent_parts or []
             for file in file_list:
                 file_name = file.get("name", "")
                 is_dir = file.get("is_dir", False)
+                path_parts = parent_parts + [file_name]
 
                 if is_dir:
                     sub_files = file.get("children", [])
                     if sub_files:
-                        collect_video_files(sub_files)
+                        collect_video_files(sub_files, path_parts)
                     continue
 
                 # 检查文件扩展名
                 ext = Path(file_name).suffix.lower()
                 if ext not in FileMatcher.VIDEO_EXTENSIONS:
+                    continue
+
+                # 文件及其资源目录均不含目标片名时，不得作为电影候选。
+                if not FileMatcher._movie_path_matches_title(path_parts, title):
                     continue
 
                 # 检查文件大小

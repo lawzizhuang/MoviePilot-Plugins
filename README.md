@@ -61,10 +61,14 @@ p115client==0.0.9.6.5.1
 ```text
 插件 ID：P115TGSub
 目录：plugins.v2/p115tgsub/
-版本：2.4.7
+版本：2.4.8
 ```
 
 面向“资源直接发布在 Telegram 公开频道”及 4K Monitor 匿名免费资源的订阅追更场景。插件自行访问 Telegram 公开搜索页和按 TMDB ID 的 4K Monitor 公开资源页，不调用 CloudSaver API，也不保存 CloudSaver 的地址、JWT 或账号密码。
+
+### v2.4.8
+
+- **电影身份双重校验**：Telegram 候选只以资源标题区匹配片名，剧情简介不再参与；分享内电影文件还须在文件名或资源目录明确命中目标片名，避免错片转存及错误完成订阅。
 
 ### v2.4.7
 
@@ -224,6 +228,7 @@ MoviePilot V2 读取 `package.v2.json` 与 `plugins.v2/` 目录；自定义仓�
 ```bash
 python -m compileall -q plugins.v2/p115tgsub
 python plugins.v2/p115tgsub/test_telegram_web.py
+python plugins.v2/p115tgsub/test_file_matcher.py
 python plugins.v2/p115tgsub/test_sync_handler.py
 python plugins.v2/p115tgsub/test_quark_client.py
 python plugins.v2/p115tgsub/test_smartstrm_client.py
@@ -235,6 +240,7 @@ git diff --check
 测试覆盖：
 
 - Telegram 消息内直接 115/夸克链接、Telegraph 二跳、混合网盘链接过滤、标题初筛先于上限；
+- 电影候选资源标题区与文件/目录片名双重身份校验，避免剧情简介关键词或无关视频误转存；
 - 115 标题匹配与订阅集数回退；
 - 夸克分享解析、目录读取、指定文件保存、风控熔断、二次确认；
 - SmartStrm Webhook 契约（GET 校验 / POST 增量触发）与待重试队列单次触发/停滞；

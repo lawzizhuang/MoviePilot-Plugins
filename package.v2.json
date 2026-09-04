@@ -56,11 +56,12 @@
   "release": true,
   "description": "读取 MoviePilot 订阅，搜索 Telegram 公开频道及 4K Monitor 匿名免费磁力资源并补齐缺失内容；夸克转存后触发 SmartStrm 本地增量生成 STRM。",
   "labels": "订阅,115网盘,Telegram,追更",
-  "version": "2.4.7",
+  "version": "2.4.8",
   "icon": "https://raw.githubusercontent.com/jxxghp/MoviePilot-Plugins/main/icons/cloud.png",
   "author": "lawzizhuang",
   "level": 1,
   "history": {
+   "v2.4.8": "修复：电影候选仅匹配 Telegram 资源标题区；文件名或资源目录须明确命中目标片名，防止剧情简介关键词导致错片转存或误完成订阅。",
    "v2.4.7": "修复：补齐 Telegram 正文 ED2K/磁力搜索的追更候选排序参数，避免 115 分享未命中后离线路径抛出 TypeError。",
    "v2.4.6": "优化：区分连续尾集追更与老剧补档；追更候选按 Telegram 消息发布时间从新到旧截取，补档保留历史候选顺序，减少旧单集无效 115 查询。",
    "v2.4.5": "修复：TMDB 剧集播出日期不再硬性拦截追更搜索，支持超前点映、会员抢先看及元数据滞后的剧集；仍须通过标题、季集和分享目录文件严格校验。",
