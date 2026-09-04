@@ -193,6 +193,21 @@ def test_sync_prioritizes_telegram_candidate_with_missing_episode():
     assert not SyncHandler._telegram_resource_matches_missing_episode(resource_old, 1, {25})
 
 
+def test_explicit_non_missing_single_episode_is_skipped_before_115_lookup():
+    assert SyncHandler._telegram_resource_is_explicit_non_missing_single_episode(
+        {"title": "测试剧 (2026) S01E09 4K WEB-DL"}, 1, set(range(16, 25))
+    )
+    assert not SyncHandler._telegram_resource_is_explicit_non_missing_single_episode(
+        {"title": "测试剧 (2026) S01E16 4K WEB-DL"}, 1, set(range(16, 25))
+    )
+    assert not SyncHandler._telegram_resource_is_explicit_non_missing_single_episode(
+        {"title": "测试剧 (2026) S01E01-E24 4K WEB-DL"}, 1, set(range(16, 25))
+    )
+    assert not SyncHandler._telegram_resource_is_explicit_non_missing_single_episode(
+        {"title": "测试剧 (2026) 更新至 S01E09"}, 1, set(range(16, 25))
+    )
+
+
 def test_tmdb_unreleased_metadata_never_blocks_episode_search_contract():
     source_root = Path(__file__).parent / "handlers"
     for path in (source_root / "sync.py", source_root / "quark_sync.py"):
@@ -214,5 +229,6 @@ if __name__ == "__main__":
     test_progress_plan_never_increases_existing_lack_episode()
     test_progress_plan_rejects_invalid_subscription_range()
     test_sync_prioritizes_telegram_candidate_with_missing_episode()
+    test_explicit_non_missing_single_episode_is_skipped_before_115_lookup()
     test_tmdb_unreleased_metadata_never_blocks_episode_search_contract()
     print("sync handler tests: OK")

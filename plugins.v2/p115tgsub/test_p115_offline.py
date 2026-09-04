@@ -56,6 +56,16 @@ class _ShareClient:
         return response
 
 
+class _TransferClient:
+    def __init__(self, response):
+        self.response = response
+        self.calls = 0
+
+    def share_receive(self, payload):
+        self.calls += 1
+        return self.response
+
+
 def _query_manager(client):
     manager = object.__new__(P115ClientManager)
     manager.client = client
@@ -80,6 +90,54 @@ def test_offline_task_uses_configured_directory_cid():
     assert client.payloads == [{"url": ed2k, "wp_path_id": 987654}]
     assert manager.get_api_call_count() == 1
     assert ed2k not in manager.offline_resource_key(ed2k)
+
+
+def test_expired_share_batch_does_not_fallback_to_per_file_transfer():
+    client = _TransferClient({"state": False, "error": "链接已过期", "errno": 4100018})
+    manager = object.__new__(P115ClientManager)
+    manager.client = client
+    manager.rate_limiter = _Limiter()
+    manager._api_call_count = 0
+    manager.extract_share_info = lambda url: {"share_code": "test", "receive_code": "code"}
+    manager.get_pid_by_path = lambda path, mkdir=True: 987654
+    manager.DEFAULT_MAX_RETRIES = 0
+
+    success_ids, failed_ids = manager.transfer_files_batch(
+        "https://115.com/s/redacted", ["1", "2"], "/inbox/Follow/测试剧", batch_size=10
+    )
+
+    assert success_ids == []
+    assert failed_ids == ["1", "2"]
+    assert client.calls == 1
+
+
+def test_terminal_error_during_per_file_fallback_stops_remaining_transfer_requests():
+    client = _TransferClient({"state": False, "error": "链接已过期", "errno": 4100018})
+    manager = object.__new__(P115ClientManager)
+    manager.client = client
+    manager.rate_limiter = _Limiter()
+    manager._api_call_count = 0
+    manager.extract_share_info = lambda url: {"share_code": "test", "receive_code": "code"}
+    manager.get_pid_by_path = lambda path, mkdir=True: 987654
+    manager.DEFAULT_MAX_RETRIES = 0
+    calls = {"count": 0}
+
+    def _batch_then_expired(*args, **kwargs):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            manager._last_transfer_error_code = 0
+            return False
+        manager._last_transfer_error_code = 4100018
+        return False
+
+    manager._do_transfer = _batch_then_expired
+    success_ids, failed_ids = manager.transfer_files_batch(
+        "https://115.com/s/redacted", ["1", "2", "3"], "/inbox/Follow/测试剧", batch_size=10
+    )
+
+    assert success_ids == []
+    assert failed_ids == ["1", "2", "3"]
+    assert calls["count"] == 2
 
 
 def test_share_status_retries_405_and_does_not_mark_share_invalid():
@@ -122,6 +180,8 @@ def test_circuit_breaker_blocks_all_web_read_queries():
 
 if __name__ == "__main__":
     test_offline_task_uses_configured_directory_cid()
+    test_expired_share_batch_does_not_fallback_to_per_file_transfer()
+    test_terminal_error_during_per_file_fallback_stops_remaining_transfer_requests()
     test_share_status_retries_405_and_does_not_mark_share_invalid()
     test_share_status_405_circuit_breaker_stops_followup_queries()
     test_circuit_breaker_blocks_all_web_read_queries()

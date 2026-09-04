@@ -185,6 +185,7 @@ class P115ClientManager:
     READ_RETRY_ATTEMPTS = 2          # 只读查询最多尝试次数（首次 + 1 次退避重试）
     READ_RETRY_DELAY = 3.0           # 只读查询首次失败后的基础退避秒数
     WEB_QUERY_405_LIMIT = 3          # 单轮 Web 查询 405 阈值，达到后熔断
+    TERMINAL_SHARE_ERROR_CODES = frozenset({4100010, 4100018})  # 分享取消、过期，重试无意义
 
     def __init__(
         self,
@@ -880,10 +881,16 @@ class P115ClientManager:
             if success:
                 success_ids.extend(batch)
                 logger.info(f"第 {batch_num} 批转存成功")
+            elif self._is_terminal_share_error(getattr(self, "_last_transfer_error_code", 0)):
+                # 分享本身已取消或过期时，逐文件请求只会放大无效写入。
+                failed_ids.extend(file_ids[batch_index:])
+                logger.warning(f"第 {batch_num} 批因分享已失效而停止当前分享的后续转存")
+                break
             else:
-                # 批量失败时，尝试逐个转存以确定哪些失败
+                # 批量失败时，尝试逐个转存以确定哪些失败。
+                terminal_failure = False
                 logger.warning(f"第 {batch_num} 批批量转存失败，尝试逐个转存...")
-                for fid in batch:
+                for file_index, fid in enumerate(batch):
                     single_success = self._do_transfer(
                         share_code=share_code,
                         receive_code=receive_code,
@@ -895,6 +902,13 @@ class P115ClientManager:
                         success_ids.append(fid)
                     else:
                         failed_ids.append(fid)
+                        if self._is_terminal_share_error(getattr(self, "_last_transfer_error_code", 0)):
+                            failed_ids.extend(file_ids[batch_index + file_index + 1:])
+                            logger.warning(f"第 {batch_num} 批确认分享已失效，停止当前分享的后续转存")
+                            terminal_failure = True
+                            break
+                if terminal_failure:
+                    break
 
             # 批次之间添加间隔，避免触发风控
             if batch_index + batch_size < len(file_ids):
@@ -906,6 +920,14 @@ class P115ClientManager:
 
         logger.info(f"批量转存完成: 成功 {len(success_ids)} 个，失败 {len(failed_ids)} 个")
         return success_ids, failed_ids
+
+    @classmethod
+    def _is_terminal_share_error(cls, error_code: Any) -> bool:
+        """分享已取消或过期时，后续逐文件转存不会改变结果。"""
+        try:
+            return int(error_code) in cls.TERMINAL_SHARE_ERROR_CODES
+        except (TypeError, ValueError):
+            return False
 
     def _do_transfer(
             self,
@@ -929,6 +951,7 @@ class P115ClientManager:
         """
         if max_retries is None:
             max_retries = self.DEFAULT_MAX_RETRIES
+        self._last_transfer_error_code = 0
 
         payload = {
             "share_code": share_code,
@@ -954,6 +977,7 @@ class P115ClientManager:
                 else:
                     error_msg = resp.get("error", "未知错误")
                     error_code = resp.get("errno", resp.get("errcode", 0))
+                    self._last_transfer_error_code = error_code
 
                     # 检查是否是重复文件
                     if "重复" in error_msg or "已存在" in error_msg:

@@ -401,6 +401,26 @@ class SyncHandler:
                 return True
         return False
 
+    @staticmethod
+    def _telegram_resource_is_explicit_non_missing_single_episode(resource: Dict[str, Any], season: int,
+                                                                   episodes: Set[int]) -> bool:
+        """仅跳过标题明确为非待补旧单集的候选，全集、范围包和更新包仍须读取分享目录。"""
+        text = unicodedata.normalize("NFKC", str(resource.get("title") or resource.get("text") or ""))
+        if not text or re.search(r"全集|全\s*\d+\s*集|收录版本|更新至|更\s*\d+\s*集", text, re.IGNORECASE):
+            return False
+        matches = re.findall(r"[Ss]\s*(\d{1,2})\s*[Ee]\s*(\d{1,3})(?!\d)", text, re.IGNORECASE)
+        if len(matches) != 1:
+            return False
+        found_season, found_episode = (int(value) for value in matches[0])
+        if found_season != int(season) or found_episode in episodes:
+            return False
+        # S01E01-E12、S01E01~E12 等是范围包，不能按旧单集跳过。
+        return not re.search(
+            r"[Ss]\s*\d{1,2}\s*[Ee]\s*\d{1,3}\s*(?:[-~～至到]|至\s*[Ee]|到\s*[Ee])",
+            text,
+            re.IGNORECASE,
+        )
+
     def _existing_tv_episodes(self, mediainfo: MediaInfo, season: int) -> Set[int]:
         """读取 MoviePilot 媒体库已确认的集数，作为订阅状态与补档范围的事实来源。"""
         try:
@@ -1145,11 +1165,18 @@ class SyncHandler:
                             self._submit_seedhub_tv(
                                 subscribe, mediainfo, save_dir, season, missing_episodes, subscribe_filter
                             )
-                    remaining_sources = enabled_sources[source_index + 1:]
-                    if remaining_sources:
-                        logger.info(f"[{source.upper()}] 未找到资源，将尝试下一个源: {remaining_sources[0].upper()}")
+                    if submitted:
+                        action = "已验证" if self._dry_run else "已提交"
+                        logger.info(
+                            f"[{source.upper()}] 未找到可直接转存的 115 分享；"
+                            f"{action} {submitted} 个 ED2K/磁力离线任务，等待目标目录文件确认"
+                        )
                     else:
-                        logger.info(f"[{source.upper()}] 未找到资源，已无更多可用源")
+                        remaining_sources = enabled_sources[source_index + 1:]
+                        if remaining_sources:
+                            logger.info(f"[{source.upper()}] 未找到资源，将尝试下一个源: {remaining_sources[0].upper()}")
+                        else:
+                            logger.info(f"[{source.upper()}] 未找到资源，已无更多可用源")
                     continue
 
                 logger.info(f"[{source.upper()}] 找到 {len(p115_results)} 个 115 网盘资源")
@@ -1181,6 +1208,11 @@ class SyncHandler:
                         continue
                     if not resource_year_matches(mediainfo.year, resource_title, title=mediainfo.title):
                         logger.info(f"跳过年份与订阅不匹配的 Telegram 候选：{safe_resource_title}")
+                        continue
+                    if self._telegram_resource_is_explicit_non_missing_single_episode(
+                        resource, season, set(missing_episodes)
+                    ):
+                        logger.info(f"跳过明确非待补旧单集的 Telegram 候选：{safe_resource_title}")
                         continue
 
                     logger.info(f"检查 115 分享：{safe_resource_title}")
