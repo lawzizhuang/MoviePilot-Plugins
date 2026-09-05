@@ -11,7 +11,8 @@ class SearchHandler:
 
     def __init__(self, telegram_client, telegram_enabled: bool = False, seedhub_client=None,
                  seedhub_enabled: bool = False, seedhub_channel: str = "seedhub_pro",
-                 fourkmonitor_client=None, fourkmonitor_enabled: bool = False) -> None:
+                 fourkmonitor_client=None, fourkmonitor_enabled: bool = False, local_catalog=None) -> None:
+        self._local_catalog = local_catalog
         self._telegram_client = telegram_client
         self._telegram_enabled = bool(telegram_enabled)
         self._seedhub_client = seedhub_client
@@ -23,6 +24,8 @@ class SearchHandler:
     def get_enabled_sources(self) -> List[str]:
         if self._telegram_enabled and self._telegram_client and self._telegram_client.channels:
             return ["telegram"]
+        if self._local_catalog:
+            return ["local_catalog"]
         if self._fourkmonitor_enabled and self._fourkmonitor_client:
             return ["4kmonitor"]
         return []
@@ -35,7 +38,27 @@ class SearchHandler:
     ) -> List[Dict[str, Any]]:
         return self.search_single_source("telegram", mediainfo, media_type, season)
 
-    def search_quark_resources(
+    def search_quark_resources(self, mediainfo, media_type, season=None, prefer_recent=False):
+        resources = self._search_telegram_quark(mediainfo, media_type, season, prefer_recent)
+        return self._with_catalog(resources, mediainfo, media_type, season, "quark")
+
+    def _with_catalog(self, resources, mediainfo, media_type, season, kind):
+        if not self._local_catalog:
+            return resources
+        output = list(resources)
+        seen = set()
+        for resource in output:
+            share = self._local_catalog._share(resource.get("url"), "")
+            if share:
+                seen.add(share[2])
+        for resource in self._local_catalog.search(mediainfo, media_type, season, kind):
+            share = self._local_catalog._share(resource.get("url"), "")
+            if share and share[2] not in seen:
+                seen.add(share[2])
+                output.append(resource)
+        return output
+
+    def _search_telegram_quark(
         self,
         mediainfo: MediaInfo,
         media_type: MediaType,
@@ -156,7 +179,16 @@ class SearchHandler:
         match = re.search(r"(?:全|\[全)\s*(\d{1,3})\s*集", text)
         return set(range(1, int(match.group(1)) + 1)) if match else set()
 
-    def search_single_source(
+    def search_single_source(self, source, mediainfo, media_type, season=None,
+                             preferred_episodes=None, prefer_recent=False):
+        resources = self._search_telegram_source(
+            source, mediainfo, media_type, season, preferred_episodes, prefer_recent
+        ) if source != "local_catalog" else []
+        if source in {"telegram", "local_catalog"}:
+            return self._with_catalog(resources, mediainfo, media_type, season, "115")
+        return resources
+
+    def _search_telegram_source(
         self,
         source: str,
         mediainfo: MediaInfo,

@@ -163,6 +163,8 @@ class UIConfig:
                 {
                     "component": "VRow",
                     "content": [
+                        {"component": "VCol", "props": {"cols": 12, "md": 3}, "content": [{"component": "VSwitch", "props": {"model": "local_catalog_enabled", "label": "启用本地资源表（115／夸克）"}}]},
+                        {"component": "VCol", "props": {"cols": 12, "md": 9}, "content": [{"component": "VTextField", "props": {"model": "local_catalog_path", "label": "私有 Excel 容器内路径", "placeholder": "/config/resource_catalogs/影巢资源分享备份-20260905.xlsx", "hint": "只读分享明细表，自动排除删除记录；每种网盘最多10个本地候选，真实文件仍须校验。文件变化后自动刷新；首版不导入ED2K或其他网盘。", "persistent-hint": True}}]},
                         {"component": "VCol", "props": {"cols": 12, "md": 3}, "content": [{"component": "VSwitch", "props": {"model": "telegram_enabled", "label": "启用 Telegram 公开频道搜索"}}]},
                         {"component": "VCol", "props": {"cols": 12, "md": 9}, "content": [{"component": "VTextarea", "props": {
                             "model": "telegram_channels", "label": "Telegram 公开频道（每行一个）", "rows": 3,
@@ -271,6 +273,7 @@ class UIConfig:
         defaults = {
             "enabled": False, "notify": True, "onlyonce": False, "cron": "30 */8 * * *",
             "cookie_source": "p115strmhelper", "cookies": "", "save_path": "/我的接收/MoviePilot-TG/TV", "movie_save_path": "/我的接收/MoviePilot-TG/Movie",
+            "local_catalog_enabled": False, "local_catalog_path": "",
             "telegram_enabled": True, "telegram_channels": "QukanMovie\nlsp115\nvip115hot",
             "telegram_timeout": 20, "telegram_max_results": 10, "telegram_max_telegraph_pages": 3,
             "max_transfer_per_sync": 20, "batch_size": 10, "skip_other_season_dirs": True, "dry_run": True,

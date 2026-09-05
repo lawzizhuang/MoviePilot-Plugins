@@ -29,7 +29,7 @@ class P115TGSub(_PluginBase):
     plugin_name = "115 TG订阅追更"
     plugin_desc = "读取 MoviePilot 订阅，直接搜索 Telegram 公开频道中的 115/夸克分享资源并补齐缺失内容。"
     plugin_icon = "https://raw.githubusercontent.com/jxxghp/MoviePilot-Plugins/main/icons/cloud.png"
-    plugin_version = "2.4.9"
+    plugin_version = "2.4.10"
     plugin_author = "lawzizhuang"
     author_url = "https://github.com/lawzizhuang/MoviePilot-Plugins"
     plugin_config_prefix = "p115tgsub_"
@@ -44,6 +44,9 @@ class P115TGSub(_PluginBase):
     _cookies = ""
     _save_path = "/我的接收/MoviePilot-TG/TV"
     _movie_save_path = "/我的接收/MoviePilot-TG/Movie"
+    _local_catalog_enabled = False
+    _local_catalog_path = ""
+    _local_catalog = None
     _telegram_enabled = True
     _telegram_channels = "QukanMovie\nlsp115\nvip115hot"
     _telegram_timeout = 20
@@ -143,6 +146,8 @@ class P115TGSub(_PluginBase):
         self._cookies = str(config.get("cookies", "") or "").strip()
         self._save_path = str(config.get("save_path", self._save_path) or self._save_path).strip()
         self._movie_save_path = str(config.get("movie_save_path", self._movie_save_path) or self._movie_save_path).strip()
+        self._local_catalog_enabled = bool(config.get("local_catalog_enabled", False))
+        self._local_catalog_path = str(config.get("local_catalog_path", "") or "").strip()
         self._telegram_enabled = bool(config.get("telegram_enabled", True))
         self._telegram_channels = str(config.get("telegram_channels", self._telegram_channels) or "")
         self._telegram_timeout = self._int_config(config.get("telegram_timeout", 20), 20, 5, 60)
@@ -304,10 +309,12 @@ class P115TGSub(_PluginBase):
             self._strm_client = None
 
     def _init_handlers(self) -> None:
+        from .clients.local_catalog import LocalCatalog
+        self._local_catalog = LocalCatalog(self._local_catalog_path) if self._local_catalog_enabled and self._local_catalog_path else None
         self._search_handler = SearchHandler(
             self._telegram_client, self._telegram_enabled, self._seedhub_client,
             self._seedhub_enabled, self._seedhub_channel,
-            self._fourkmonitor_client, self._fourkmonitor_enabled,
+            self._fourkmonitor_client, self._fourkmonitor_enabled, self._local_catalog,
         )
         self._subscribe_handler = SubscribeHandler()
         self._sync_handler = SyncHandler(
@@ -411,6 +418,8 @@ class P115TGSub(_PluginBase):
         return {
             "enabled": self._enabled, "notify": self._notify, "onlyonce": self._onlyonce, "cron": self._cron,
             "cookie_source": self._cookie_source, "cookies": self._cookies, "save_path": self._save_path, "movie_save_path": self._movie_save_path,
+            "local_catalog_enabled": self._local_catalog_enabled,
+            "local_catalog_path": self._local_catalog_path,
             "telegram_enabled": self._telegram_enabled, "telegram_channels": self._telegram_channels,
             "telegram_timeout": self._telegram_timeout, "telegram_max_results": self._telegram_max_results,
             "telegram_max_telegraph_pages": self._telegram_max_telegraph_pages,
@@ -558,9 +567,9 @@ class P115TGSub(_PluginBase):
 
         telegram_ready = bool(self._telegram_enabled and self._telegram_client and self._telegram_client.channels)
         fourkmonitor_ready = bool(self._fourkmonitor_enabled and self._fourkmonitor_client)
-        if not telegram_ready and not fourkmonitor_ready:
-            logger.error("Telegram 公开频道与 4K Monitor 均未正确配置，无法执行订阅追更")
-            self._finish_run_status(result="失败", error="未配置 Telegram 公开频道或 4K Monitor")
+        if not telegram_ready and not fourkmonitor_ready and not self._local_catalog:
+            logger.error("未配置 Telegram、4K Monitor 或本地资源表，无法执行订阅追更")
+            self._finish_run_status(result="失败", error="未配置可用搜索源")
             return False
         p115_ready = bool(self._p115_manager)
         if p115_ready:

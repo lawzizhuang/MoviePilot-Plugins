@@ -56,11 +56,12 @@
   "release": true,
   "description": "读取 MoviePilot 订阅，搜索 Telegram 公开频道及 4K Monitor 匿名免费磁力资源并补齐缺失内容；夸克转存后触发 SmartStrm 本地增量生成 STRM。",
   "labels": "订阅,115网盘,Telegram,追更",
-  "version": "2.4.9",
+  "version": "2.4.10",
   "icon": "https://raw.githubusercontent.com/jxxghp/MoviePilot-Plugins/main/icons/cloud.png",
   "author": "lawzizhuang",
   "level": 1,
   "history": {
+   "v2.4.10": "新增：私有本地 XLSX 资源表补充源，只读分享明细并排除已删除记录；按标题、年份和季数检索115/夸克候选，复用转存确认与测试模式，文件变化自动刷新内存索引。",
    "v2.4.9": "优化：115 分享明确已取消或过期时停止逐文件重试；连续追更跳过标题明确不含待补集的旧单集候选，减少无效 115 请求；修正 ED2K/磁力离线任务已提交后的汇总日志。",
    "v2.4.8": "修复：电影候选仅匹配 Telegram 资源标题区；文件名或资源目录须明确命中目标片名，防止剧情简介关键词导致错片转存或误完成订阅。",
    "v2.4.7": "修复：补齐 Telegram 正文 ED2K/磁力搜索的追更候选排序参数，避免 115 分享未命中后离线路径抛出 TypeError。",
