@@ -29,13 +29,15 @@ class P115TGSub(_PluginBase):
     plugin_name = "115 TG订阅追更"
     plugin_desc = "读取 MoviePilot 订阅，直接搜索 Telegram 公开频道中的 115/夸克分享资源并补齐缺失内容。"
     plugin_icon = "https://raw.githubusercontent.com/jxxghp/MoviePilot-Plugins/main/icons/cloud.png"
-    plugin_version = "2.4.11"
+    plugin_version = "2.4.12"
     plugin_author = "lawzizhuang"
     author_url = "https://github.com/lawzizhuang/MoviePilot-Plugins"
     plugin_config_prefix = "p115tgsub_"
     plugin_order = 21
     auth_level = 1
 
+    _bot_transfer_enabled = False
+    _bot_transfer_users = ""
     _enabled = False
     _notify = True
     _onlyonce = False
@@ -132,6 +134,8 @@ class P115TGSub(_PluginBase):
 
     def init_plugin(self, config: dict = None):
         config = config or {}
+        self._bot_transfer_enabled = bool(config.get("bot_transfer_enabled", False))
+        self._bot_transfer_users = str(config.get("bot_transfer_users", "") or "")
         self._enabled = bool(config.get("enabled", False))
         self._notify = bool(config.get("notify", True))
         self._onlyonce = bool(config.get("onlyonce", False))
@@ -416,6 +420,8 @@ class P115TGSub(_PluginBase):
 
     def _config_snapshot(self) -> Dict[str, Any]:
         return {
+            "bot_transfer_enabled": self._bot_transfer_enabled,
+            "bot_transfer_users": self._bot_transfer_users,
             "enabled": self._enabled, "notify": self._notify, "onlyonce": self._onlyonce, "cron": self._cron,
             "cookie_source": self._cookie_source, "cookies": self._cookies, "save_path": self._save_path, "movie_save_path": self._movie_save_path,
             "local_catalog_enabled": self._local_catalog_enabled,
@@ -526,6 +532,12 @@ class P115TGSub(_PluginBase):
         return [{
             "cmd": "/p115_tg_sub_action", "event": EventType.PluginAction,
             "desc": "115 TG订阅追更", "category": "订阅", "data": {"action": "p115_tg_sub_action"},
+        }, {
+            "cmd": "/tv", "event": EventType.PluginAction,
+            "desc": "115剧集分享转存", "category": "订阅", "data": {"action": "p115_manual_tv"},
+        }, {
+            "cmd": "/movie", "event": EventType.PluginAction,
+            "desc": "115电影分享转存", "category": "订阅", "data": {"action": "p115_manual_movie"},
         }]
 
     @staticmethod
@@ -839,6 +851,63 @@ class P115TGSub(_PluginBase):
         except OSError as exc:
             logger.error(f"清理 115 TG订阅追更插件日志失败：{exc}")
             return {"success": False, "message": f"清理失败：{exc}"}
+
+    @eventmanager.register(EventType.PluginAction)
+    def remote_manual(self, event: Event):
+        """授权用户通过Bot提交单媒体分享，与追更互斥执行。"""
+        data = event.event_data if event else None
+        if not data or data.get("action") not in {"p115_manual_tv", "p115_manual_movie"}:
+            return
+        user = str(data.get("user") or "")
+        allowed = self._bot_transfer_users.replace(",", " ").split()
+        channel = data.get("channel")
+        if not user or not channel or user not in allowed:
+            return
+        def reply(text):
+            self.post_message(channel=channel, userid=user, title="【115分享转存】", text=text)
+        if not self._enabled or not self._bot_transfer_enabled:
+            reply("请先启用插件及Bot手动转存。")
+            return
+        from .handlers.manual import parse_link, run_manual
+        try:
+            url = parse_link(data.get("arg_str"))
+        except ValueError:
+            reply("用法：/tv 或 /movie 后接一条HTTPS 115分享链接，访问码包含在链接参数中。")
+            return
+        with run_state_lock:
+            if self._sync_running or self._progress_repair_running:
+                reply("已有追更、导入或核验任务运行，请完成后重发。")
+                return
+            self._sync_running = True
+        def work():
+            try:
+                with lock:
+                    if not self._enabled or not self._bot_transfer_enabled or not self._p115_manager:
+                        reply("插件已关闭或115客户端不可用。")
+                        return
+                    manager = self._p115_manager
+                    if manager.web_query_blocked:
+                        reply("115读取已熔断，本次不执行。")
+                        return
+                    kind = "tv" if data["action"] == "p115_manual_tv" else "movie"
+                    reply(run_manual(manager, url, kind,
+                                     self._save_path if kind == "tv" else self._movie_save_path,
+                                     self._dry_run, self._max_transfer_per_sync, self._batch_size))
+            except ValueError:
+                reply("链接、媒体身份、季集或数量未通过安全校验；请检查分享命名、访问码及数量限制。")
+            except Exception as exc:
+                logger.warning(f"Bot转存任务异常: {type(exc).__name__}")
+                reply("任务异常，可能已有部分转存，请核对目标目录后重试；未修改订阅。")
+            finally:
+                with run_state_lock:
+                    self._sync_running = False
+        try:
+            reply("已接收，正在读取与核验分享。")
+            Thread(target=work, name="P115ManualTransfer", daemon=True).start()
+        except Exception:
+            with run_state_lock:
+                self._sync_running = False
+            raise
 
     @eventmanager.register(EventType.PluginAction)
     def remote_sync(self, event: Event):
