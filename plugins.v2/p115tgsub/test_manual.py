@@ -138,8 +138,36 @@ def test_command_authorization_and_busy_guard():
     assert '启用' in replies[-1]['text']
 
 
+def test_offline_links():
+    import hashlib
+    ed = 'ed2k://|file|Show.S01E01.mkv|123|' + 'a'*32 + '|/'
+    magnet = 'magnet:?xt=urn:btih:' + 'a'*40 + '&dn=Show.S01E01.mkv'
+    assert manual.parse_link(ed) == ed
+    assert manual.parse_link(magnet) == magnet
+    for bad in ['magnet:?xt=urn:btih:'+'a'*40, 'ed2k://|file|x|0|'+'a'*32+'|/', magnet+' extra']:
+        try:
+            manual.parse_link(bad)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(bad)
+    manager = Manager()
+    manager.offline_resource_key = lambda key: hashlib.sha256(key.encode()).hexdigest()
+    calls = []
+    manager.submit_offline_task = lambda url, path: calls.append(path) or True
+    records = []
+    manual.run_offline(manager, ed, 'tv', '/TV', True, records, lambda data: None)
+    assert not calls and not records
+    manual.run_offline(manager, ed, 'tv', '/TV', False, records, lambda data: None)
+    assert calls == ['/TV/Show (2026)/Season 1'] and len(records) == 1
+    manual.run_offline(manager, ed, 'tv', '/TV', False, records, lambda data: None)
+    assert len(calls) == 1
+    assert ed not in str(records)
+
+
 if __name__ == '__main__':
     test_manual()
     test_movie_and_multiseason()
     test_command_authorization_and_busy_guard()
+    test_offline_links()
     print('manual import tests: OK')

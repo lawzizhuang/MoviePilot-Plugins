@@ -56,11 +56,12 @@
   "release": true,
   "description": "读取 MoviePilot 订阅，搜索 Telegram 公开频道及 4K Monitor 匿名免费磁力资源并补齐缺失内容；夸克转存后触发 SmartStrm 本地增量生成 STRM。",
   "labels": "订阅,115网盘,Telegram,追更",
-  "version": "2.4.12",
+  "version": "2.4.13",
   "icon": "https://raw.githubusercontent.com/jxxghp/MoviePilot-Plugins/main/icons/cloud.png",
   "author": "lawzizhuang",
   "level": 1,
   "history": {
+   "v2.4.13": "新增：/tv与/movie自动分流115分享转存、ED2K文件与含dn名称的BTIH磁力离线任务；复用默认路径和测试模式，离线提交使用持久化哈希去重，明确区分提交与下载完成。",
    "v2.4.12": "新增：通过MoviePilot Bot的/tv与/movie命令导入单媒体115分享，按现有剧集和电影路径转存；独立开关及用户白名单、测试模式、目标查重，与追更互斥；不修改订阅，不重复触发外部整理。",
    "v2.4.11": "优化：离线确认与查重复用目录结果，分享递归按单目录重试；目标目录分页读取并校验完整性，查询失败暂缓相关写入；明确取消或过期分享六小时内存冷却，核验失败显示降级。非405根因修复。",
    "v2.4.10": "新增：私有本地 XLSX 资源表补充源，只读分享明细并排除已删除记录；按标题、年份和季数检索115/夸克候选，复用转存确认与测试模式，文件变化自动刷新内存索引。",

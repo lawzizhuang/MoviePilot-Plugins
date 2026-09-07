@@ -1,7 +1,7 @@
 """Bot单媒体115分享导入；不创建或修改订阅，不重复触发整理。"""
 import re
 from pathlib import PurePosixPath
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, parse_qs, unquote
 
 from app.chain import ChainBase
 from app.core.metainfo import MetaInfo
@@ -10,8 +10,12 @@ from ..utils.file_matcher import FileMatcher
 
 
 def parse_link(text):
-    """只接受一条受支持的HTTPS分享链接，不接受任意目标URL。"""
-    parts = str(text or '').strip().split()
+    """接受单条115分享、ED2K或BT磁力；不请求任意远程URL。"""
+    value = str(text or '').strip()
+    if value.lower().startswith(('ed2k:', 'magnet:')):
+        offline_info(value)
+        return value
+    parts = value.split()
     if len(parts) != 1:
         raise ValueError('请仅发送一条115分享链接，访问码请包含在链接参数中。')
     url = parts[0]
@@ -21,6 +25,71 @@ def parse_link(text):
             or not re.fullmatch(r'/s/[A-Za-z0-9]+/?', parsed.path)):
         raise ValueError('只支持115、115cdn、anxia的HTTPS分享链接。')
     return url
+
+
+def offline_info(url):
+    """验证离线协议并提取文件名与稳定内容标识；裸磁力不猜测媒体。"""
+    if any(c.isspace() for c in url):
+        raise ValueError('离线链接中的空格须URL编码，且每次仅支持一条链接。')
+    if url.lower().startswith('ed2k:'):
+        match = re.fullmatch(r'ed2k://\|file\|([^|]+)\|(\d+)\|([a-fA-F0-9]{32})\|/', url, re.I)
+        if not match or int(match[2]) <= 0:
+            raise ValueError('ED2K文件链接格式无效。')
+        name = unquote(match[1])
+        key = f'ed2k:{match[3].lower()}:{int(match[2])}'
+    else:
+        parsed = urlsplit(url)
+        if parsed.scheme.lower() != 'magnet' or parsed.netloc or parsed.path:
+            raise ValueError('磁力链接格式无效。')
+        args = parse_qs(parsed.query)
+        hashes = [v[9:] for v in args.get('xt', []) if v.lower().startswith('urn:btih:')]
+        if len(hashes) != 1 or not re.fullmatch(r'[a-fA-F0-9]{40}|[A-Z2-7a-z]{32}', hashes[0]):
+            raise ValueError('首版磁力离线仅支持单一BTIH内容标识。')
+        import base64
+        digest = hashes[0].lower() if len(hashes[0]) == 40 else base64.b32decode(hashes[0].upper()).hex()
+        names = args.get('dn', [])
+        if len(names) != 1:
+            raise ValueError('磁力须包含dn名称参数，裸磁力无法安全确定媒体目录。')
+        name, key = names[0], f'btih:{digest}'
+    if not name.strip() or any(ord(c) < 32 for c in name) or len(name) > 1024:
+        raise ValueError('离线名称无效。')
+    return name, key
+
+
+def run_offline(manager, url, kind, root, dry_run, submitted, save_submitted):
+    """命名离线资源按指定类型识别后提交；提交成功不冒称落盘或整理完成。"""
+    name, key = offline_info(url)
+    meta = MetaInfo(name)
+    media_type = MediaType.TV if kind == 'tv' else MediaType.MOVIE
+    season = meta.begin_season
+    if kind == 'tv' and not season:
+        raise ValueError('剧集离线名称须含明确季号，例如S01。')
+    if kind == 'movie' and (season or meta.begin_episode):
+        raise ValueError('电影命令不能导入剧集离线资源。')
+    meta.type = media_type
+    media = ChainBase().recognize_media(meta=meta, mtype=media_type, cache=True)
+    if (not media or not getattr(media, 'tmdb_id', None) or media.type != media_type
+            or not FileMatcher._movie_path_matches_title([name], media.title)):
+        raise ValueError('离线资源名称无法可靠匹配媒体身份。')
+    if not str(root).startswith('/'):
+        raise ValueError('目标根目录配置无效。')
+    folder = safe_component(f'{media.title} ({media.year})' if media.year else media.title)
+    path = f'{root.rstrip("/")}/{folder}' + (f'/Season {season}' if kind == 'tv' else '')
+    token = manager.offline_resource_key(f'{key}|{path}')
+    if token in submitted:
+        return '该离线资源已提交过；请检查115离线任务及目标文件，未重复提交。'
+    existing = manager.list_files(path)
+    if any((f.get('n') or f.get('name')) == name for f in existing):
+        return '目标目录已存在同名文件，未提交离线任务。'
+    if dry_run:
+        return f'测试模式：已识别离线资源，目标目录：{path}；未创建目录或提交任务。'
+    if len(submitted) >= 1000:
+        raise ValueError('手动离线去重记录已达到1000条，请先人工核查记录。')
+    if not manager.submit_offline_task(url, path):
+        return '离线任务未确认提交成功；请先检查115任务列表，避免盲目重复提交。'
+    submitted.append(token)
+    save_submitted(submitted)
+    return f'115离线任务已提交，目标目录：{path}。尚未确认下载完成；整理依赖外部监控，未修改订阅。'
 
 
 def safe_component(value):
