@@ -165,10 +165,11 @@ class SyncHandler:
     def offline_stats(self) -> Dict[str, int]:
         return self._offline_queue.stats() if self._offline_queue else {"pending": 0, "completed": 0, "expired": 0}
 
-    def _reconcile_offline_movie(self, subscribe, mediainfo: MediaInfo, save_dir: str) -> bool:
+    def _reconcile_offline_movie(self, subscribe, mediainfo: MediaInfo, save_dir: str, existing=None) -> bool:
         if not self._offline_queue or not self._offline_queue.pending_movie(subscribe.id):
             return
-        existing = self._p115_manager.list_files(save_dir)
+        if existing is None:
+            existing = self._p115_manager.list_files(save_dir)
         if FileMatcher.match_movie_file(existing, mediainfo.title):
             self._offline_queue.complete_movie(subscribe.id)
             if not self._dry_run:
@@ -177,13 +178,14 @@ class SyncHandler:
             return True
         return False
 
-    def _reconcile_offline_tv(self, subscribe, mediainfo: MediaInfo, season: int, save_dir: str) -> Set[int]:
+    def _reconcile_offline_tv(self, subscribe, mediainfo: MediaInfo, season: int, save_dir: str, existing=None) -> Set[int]:
         if not self._offline_queue:
             return set()
         pending = self._offline_queue.pending_episodes(subscribe.id, season)
         if not pending:
             return set()
-        existing = FileMatcher.check_existing_episodes(self._p115_manager, mediainfo, season, save_dir)
+        if existing is None:
+            existing = FileMatcher.check_existing_episodes(self._p115_manager, mediainfo, season, save_dir)
         completed = self._offline_queue.complete_tv(subscribe.id, season, existing)
         completed_episodes = {int(item.get("episode") or 0) for item in completed}
         if completed_episodes and not self._dry_run:
@@ -656,11 +658,12 @@ class SyncHandler:
 
             # 115 离线任务完成后仍须以目标目录真实文件为准，再走既有订阅闭环。
             offline_save_dir = f"{self._movie_save_path}/{mediainfo.title} ({mediainfo.year})" if mediainfo.year else f"{self._movie_save_path}/{mediainfo.title}"
-            if self._reconcile_offline_movie(subscribe, mediainfo, offline_save_dir):
+            existing_files = self._p115_manager.list_files(offline_save_dir)
+            if self._reconcile_offline_movie(subscribe, mediainfo, offline_save_dir, existing_files):
                 return transferred_count
             try:
                 existing_movie = FileMatcher.match_movie_file(
-                    self._p115_manager.list_files(offline_save_dir), mediainfo.title
+                    existing_files, mediainfo.title
                 )
             except Exception as exc:
                 logger.warning(f"检查 115 电影目标目录失败：{type(exc).__name__}")
@@ -1033,16 +1036,18 @@ class SyncHandler:
             # 115 离线任务完成后仍须以目标目录真实文件为准，再走既有订阅闭环。
             show_folder = f"{mediainfo.title} ({mediainfo.year})" if mediainfo.year else mediainfo.title
             offline_save_dir = f"{self._save_path}/{show_folder}/Season {season}"
-            offline_pending = self._reconcile_offline_tv(subscribe, mediainfo, season, offline_save_dir)
+            existing_episodes_in_cloud = FileMatcher.check_existing_episodes(
+                self._p115_manager, mediainfo, season, offline_save_dir
+            )
+            offline_pending = self._reconcile_offline_tv(
+                subscribe, mediainfo, season, offline_save_dir, existing_episodes_in_cloud
+            )
 
             # 构建转存路径（标题 + 年份，格式如 "权力的游戏 (2011)"）
             show_folder = f"{mediainfo.title} ({mediainfo.year})" if mediainfo.year else mediainfo.title
             save_dir = f"{self._save_path}/{show_folder}/Season {season}"
 
-            # 检查网盘目录中已存在的剧集
-            existing_episodes_in_cloud = FileMatcher.check_existing_episodes(
-                self._p115_manager, mediainfo, season, save_dir
-            )
+            # 复用同一份完整目录核验结果，不为离线确认和正常查重重复读取。
 
             # 合并已存在的集数
             all_existing = transferred_episodes | existing_episodes_in_cloud

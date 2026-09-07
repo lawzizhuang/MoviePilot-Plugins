@@ -228,6 +228,7 @@ class P115ClientManager:
         self._share_info_cache: Dict[str, Dict[str, str]] = {}
         self._web_query_405_count = 0
         self._web_query_blocked = False
+        self.read_incomplete = False
 
         if P115_AVAILABLE and cookies:
             try:
@@ -315,6 +316,7 @@ class P115ClientManager:
         """重置仅本轮有效的 Web 查询熔断状态。"""
         self._web_query_405_count = 0
         self._web_query_blocked = False
+        self.read_incomplete = False
 
     @property
     def web_query_blocked(self) -> bool:
@@ -329,7 +331,7 @@ class P115ClientManager:
         :return: 文件夹 ID，0 为根目录，-1 为获取失败
         """
         if not self.client:
-            return -1
+            raise RuntimeError("115 客户端不可用，目录状态未知")
 
         # 规范化路径
         path = path.replace("\\", "/")
@@ -348,6 +350,9 @@ class P115ClientManager:
 
         try:
             resp = self._read_query("path_id", lambda: self.client.fs_dir_getid(path))
+            check_response(resp)
+            if "id" not in resp:
+                raise RuntimeError("115 路径查询响应缺少 id，目录状态未知")
             if resp.get("id"):
                 cid = int(resp["id"])
                 self.path_cache.set(path, cid)
@@ -363,7 +368,9 @@ class P115ClientManager:
                         return cid
                 except Exception as fallback_exc:
                     logger.info(f"备用路径查询失败 ({path}): {type(fallback_exc).__name__}")
-            logger.info(f"直接获取路径 ID 失败 ({path}): {primary_exc}")
+            self.read_incomplete = True
+            logger.warning(f"目录状态未知，停止处理该路径: {type(primary_exc).__name__}")
+            raise RuntimeError("115 路径查询失败，不能作为目录不存在处理") from primary_exc
 
         # 如果不创建，则返回失败
         if not mkdir:
@@ -469,6 +476,24 @@ class P115ClientManager:
             logger.error(f"解析分享链接失败: {e}")
             return {}
 
+    def _terminal_share_key(self, share_code: str, receive_code: str) -> str:
+        """生成会话内失效分享缓存键，不额外保存访问码原文。"""
+        return hashlib.sha256(f"{share_code}\0{receive_code or ''}".encode()).hexdigest()
+
+    def _remember_terminal_share(self, share_code: str, receive_code: str, code) -> None:
+        """只缓存明确取消或过期的分享，最多512项，冷却六小时。"""
+        if not self._is_terminal_share_error(code):
+            return
+        now = time.monotonic()
+        cache = getattr(self, "_terminal_shares", {})
+        cache = {key: value for key, value in cache.items() if value[0] > now}
+        key = self._terminal_share_key(share_code, receive_code)
+        cache.pop(key, None)
+        while len(cache) >= 512:
+            cache.pop(next(iter(cache)))
+        cache[key] = (now + 6 * 3600, int(code))
+        self._terminal_shares = cache
+
     def check_share_status(self, share_url: str) -> ShareLinkStatus:
         """
         检查分享链接的状态（是否有效、过期、失效等）
@@ -490,6 +515,16 @@ class P115ClientManager:
 
         if not share_code:
             status.error_message = "无效的分享链接格式"
+            return status
+
+        key = self._terminal_share_key(share_code, receive_code)
+        cached = getattr(self, "_terminal_shares", {}).get(key)
+        if cached and cached[0] > time.monotonic():
+            status.error_code = cached[1]
+            status.is_cancelled = cached[1] == 4100010
+            status.is_expired = cached[1] == 4100018
+            status.error_message = "明确失效分享仍在冷却期"
+            logger.info("跳过冷却期内的明确失效分享")
             return status
 
         try:
@@ -547,6 +582,7 @@ class P115ClientManager:
                 if "删除" in error_msg or "不存在" in error_msg or "delete" in error_msg_lower:
                     status.is_deleted = True
 
+                self._remember_terminal_share(share_code, receive_code, status.error_code)
                 logger.info(f"分享链接无效: {status.error_message} (errno: {status.error_code})")
 
         except Exception as e:
@@ -612,6 +648,7 @@ class P115ClientManager:
             )
         except Exception as exc:
             error_kind = self._transient_error_kind(exc)
+            self.read_incomplete = True
             if error_kind or self._web_query_blocked:
                 logger.warning("115 分享目录读取暂时失败，未判定为空，本轮暂不处理该候选")
                 return None
@@ -637,20 +674,21 @@ class P115ClientManager:
             files: List[dict] = []
             self._list_share_files_once(share_code, receive_code, cid, depth, max_depth, target_season, files)
             return files
-        return self._read_query("share_files", query)
+        # 重试边界仅覆盖当前目录读取，不包裹子目录递归。
+        return query()
 
     def _list_share_files_once(
             self, share_code: str, receive_code: str, cid: int, depth: int,
             max_depth: int, target_season: int, files: List[dict]
     ) -> None:
         """读取单层分享目录；由 _read_query 统一处理临时失败的重试与熔断。"""
-        iterator = share_iterdir(
+        iterator = self._read_query("share_directory", lambda: list(share_iterdir(
             self.client,
             share_code=share_code,
             receive_code=receive_code,
             cid=cid,
             app="web",
-        )
+        )))
 
         for item in iterator:
             file_info = {
@@ -978,6 +1016,7 @@ class P115ClientManager:
                     error_msg = resp.get("error", "未知错误")
                     error_code = resp.get("errno", resp.get("errcode", 0))
                     self._last_transfer_error_code = error_code
+                    self._remember_terminal_share(share_code, receive_code, error_code)
 
                     # 检查是否是重复文件
                     if "重复" in error_msg or "已存在" in error_msg:
@@ -1043,22 +1082,52 @@ class P115ClientManager:
         :return: 文件列表
         """
         if not self.client:
-            return []
+            raise RuntimeError("115 客户端不可用，目录状态未知")
 
         cid = self.get_pid_by_path(path, mkdir=False)
         if cid == -1:
             return []
 
         try:
-            self.rate_limiter.wait()
-            self._api_call_count += 1
-            resp = self.client.fs_files({"cid": cid, "limit": 1000})
-            if resp.get("state"):
-                return resp.get("data", [])
-            return []
+            files = []
+            seen = set()
+            total = None
+            # 单个追更目录最多读取20页；超出预算暂缓，绝不使用截断结果。
+            for _ in range(20):
+                offset = len(files)
+                def query():
+                    resp = self.client.fs_files({
+                        "cid": cid, "limit": 1000, "offset": offset,
+                        "cur": 1, "o": "file_name", "asc": 1,
+                    })
+                    check_response(resp)
+                    if not isinstance(resp.get("data"), list) or "count" not in resp:
+                        raise RuntimeError("115 目录响应不完整")
+                    return resp
+                resp = self._read_query("target_files_page", query)
+                count = int(resp["count"])
+                if count < 0 or (total is not None and count != total):
+                    raise RuntimeError("115 分页期间目录数量变化，暂缓查重")
+                total = count
+                if int(resp.get("offset", offset)) != offset:
+                    raise RuntimeError("115 分页偏移不匹配")
+                page = resp["data"]
+                for item in page:
+                    fid = item.get("fid")
+                    key = ("file", str(fid)) if fid not in (None, 0, "0", "") else ("dir", str(item.get("cid", "")))
+                    if not key[1] or key in seen:
+                        raise RuntimeError("115 分页条目标识缺失或重复，暂缓查重")
+                    seen.add(key)
+                files.extend(page)
+                if len(files) == total:
+                    return files
+                if not page or len(files) > total:
+                    raise RuntimeError("115 分页数量不一致，暂缓查重")
+            raise RuntimeError("115 目录读取达到本轮分页预算，暂缓查重")
         except Exception as e:
-            logger.error(f"列出文件失败: {e}")
-            return []
+            self.read_incomplete = True
+            logger.warning(f"目录读取失败，状态未知: {type(e).__name__}")
+            raise
 
     def list_directories(self, path: str) -> List[dict]:
         """

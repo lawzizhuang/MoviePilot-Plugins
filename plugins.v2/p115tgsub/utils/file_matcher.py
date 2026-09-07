@@ -506,6 +506,7 @@ class FileMatcher:
                 logger.info(f"{mediainfo.title} S{season} 网盘目录中未找到该季剧集")
 
         except Exception as e:
-            logger.error(f"检查网盘目录失败: {e}")
+            logger.warning(f"网盘查重未完成，暂停该订阅处理: {type(e).__name__}")
+            raise
 
         return existing_episodes

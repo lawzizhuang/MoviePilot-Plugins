@@ -665,11 +665,18 @@ class P115TGSub(_PluginBase):
                 break
 
         self.save_data("history", history)
+        degraded = bool(self._p115_manager and (
+            self._p115_manager.read_incomplete or self._p115_manager.web_query_blocked
+        ))
+        if degraded:
+            logger.warning("本轮降级完成：115部分目录核验未完成或读取熔断，相关任务需重试")
         logger.info(
             f"115 TG订阅追更完成：115 转存 {transferred_115} 个，夸克转存 {transferred_quark} 个"
         )
         self._finish_run_status(
-            result="完成" if transferred_total else "完成（未发现可转存资源）",
+            result="降级完成（115核验未完成）" if degraded else (
+                "完成" if transferred_total else "完成（未发现可转存资源）"
+            ),
             transferred_115=transferred_115, transferred_quark=transferred_quark,
         )
         if self._notify:
@@ -678,7 +685,10 @@ class P115TGSub(_PluginBase):
             if transferred_quark:
                 self._quark_handler.send_transfer_notification(transfer_details_quark, transferred_quark)
             if not transferred_total:
-                self.post_message(mtype=NotificationType.Plugin, title="【115 TG订阅追更】执行完成", text="本次未发现可转存的匹配资源。")
+                self.post_message(mtype=NotificationType.Plugin, title="【115 TG订阅追更】执行完成", text=(
+                    "115部分核验未完成，本轮暂缓，待后续重试。" if degraded
+                    else "本次未发现可转存的匹配资源。"
+                ))
         return True
 
     def _run_sync_exclusive(self) -> bool:
