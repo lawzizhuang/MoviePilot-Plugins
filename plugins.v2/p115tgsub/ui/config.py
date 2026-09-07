@@ -27,7 +27,7 @@ class UIConfig:
                         {"component": "VCol", "props": {"cols": 12, "md": 2}, "content": [{"component": "VSwitch", "props": {"model": "enabled", "label": "启用插件"}}]},
                         {"component": "VCol", "props": {"cols": 12, "md": 2}, "content": [{"component": "VSwitch", "props": {"model": "notify", "label": "发送通知"}}]},
                         {"component": "VCol", "props": {"cols": 12, "md": 4}, "content": [{"component": "VSwitch", "props": {"model": "bot_transfer_enabled", "label": "启用 /tv 与 /movie 手动转存"}}]},
-                        {"component": "VCol", "props": {"cols": 12, "md": 8}, "content": [{"component": "VTextField", "props": {"model": "bot_transfer_users", "label": "允许转存的Bot用户ID", "hint": "逗号或空格分隔；留空拒绝所有命令。遵守测试模式，仅单媒体分享，不修改订阅。", "persistent-hint": True}}]},
+                        {"component": "VCol", "props": {"cols": 12, "md": 8}, "content": [{"component": "VTextField", "props": {"model": "bot_transfer_users", "label": "允许转存的Bot用户ID", "hint": "逗号或空格分隔；留空拒绝所有命令。遵守测试模式，直接投递接收根目录；不识别媒体、不修改订阅，整理由外部监控负责。", "persistent-hint": True}}]},
                         {"component": "VCol", "props": {"cols": 12, "md": 3}, "content": [{"component": "VSwitch", "props": {"model": "onlyonce", "label": "保存后立即运行一次"}}]},
                         {"component": "VCol", "props": {"cols": 12, "md": 5}, "content": [{"component": "VCronField", "props": {
                             "model": "cron", "label": "执行周期（Cron）", "placeholder": "30 */8 * * *",

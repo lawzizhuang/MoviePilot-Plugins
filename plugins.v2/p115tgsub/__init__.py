@@ -29,7 +29,7 @@ class P115TGSub(_PluginBase):
     plugin_name = "115 TG订阅追更"
     plugin_desc = "读取 MoviePilot 订阅，直接搜索 Telegram 公开频道中的 115/夸克分享资源并补齐缺失内容。"
     plugin_icon = "https://raw.githubusercontent.com/jxxghp/MoviePilot-Plugins/main/icons/cloud.png"
-    plugin_version = "2.4.13"
+    plugin_version = "2.4.14"
     plugin_author = "lawzizhuang"
     author_url = "https://github.com/lawzizhuang/MoviePilot-Plugins"
     plugin_config_prefix = "p115tgsub_"
@@ -868,11 +868,11 @@ class P115TGSub(_PluginBase):
         if not self._enabled or not self._bot_transfer_enabled:
             reply("请先启用插件及Bot手动转存。")
             return
-        from .handlers.manual import parse_link, run_manual, run_offline
+        from .handlers.manual import parse_link, run_manual, run_offline, ManualInputError
         try:
             url = parse_link(data.get("arg_str"))
         except ValueError:
-            reply("用法：/tv 或 /movie 后接一条115分享、ED2K文件或含dn名称的BTIH磁力链接；空格须URL编码。")
+            reply("用法：/tv 或 /movie 后接一条115分享、ED2K文件或BTIH磁力链接（可无名称）；空格须URL编码。")
             return
         with run_state_lock:
             if self._sync_running or self._progress_repair_running:
@@ -900,9 +900,11 @@ class P115TGSub(_PluginBase):
                         return
                     reply(run_manual(manager, url, kind,
                                      self._save_path if kind == "tv" else self._movie_save_path,
-                                     self._dry_run, self._max_transfer_per_sync, self._batch_size))
-            except ValueError:
-                reply("链接、媒体身份、季集或数量未通过安全校验；请检查分享命名、访问码及数量限制。")
+                                     self._dry_run, self._max_transfer_per_sync, self._batch_size,
+                                     list(self.get_data('manual_share_submitted') or []),
+                                     lambda records: self.save_data('manual_share_submitted', records)))
+            except ManualInputError as exc:
+                reply(str(exc))
             except Exception as exc:
                 logger.warning(f"Bot转存任务异常: {type(exc).__name__}")
                 reply("任务异常，可能已有部分转存，请核对目标目录后重试；未修改订阅。")
