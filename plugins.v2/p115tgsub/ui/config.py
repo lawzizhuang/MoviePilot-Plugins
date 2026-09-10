@@ -96,6 +96,10 @@ class UIConfig:
                     "component": "VRow",
                     "content": [
                         {"component": "VCol", "props": {"cols": 12, "md": 3}, "content": [{"component": "VSwitch", "props": {"model": "fourkmonitor_enabled", "label": "启用 4K Monitor 匿名免费磁力", "hint": "每轮按 TMDB ID 自动检查；仅免费未锁定候选，位于 Telegram 直链之后、SeedHub 之前。"}}]},
+                        {"component": "VCol", "props": {"cols": 12, "md": 3}, "content": [{"component": "VSwitch", "props": {"model": "dmhy_rss_enabled", "label": "启用DMHY动漫RSS补充源", "hint": "默认关闭；仅AniList已识别动画TV。单集与季度全集RSS各每轮至多读取一次，位于其他离线源之后。"}}]},
+                        {"component": "VCol", "props": {"cols": 12, "md": 3}, "content": [{"component": "VTextField", "props": {"model": "dmhy_rss_timeout", "label": "DMHY RSS请求超时（秒）", "type": "number", "placeholder": "20"}}]},
+                        {"component": "VCol", "props": {"cols": 12, "md": 3}, "content": [{"component": "VTextField", "props": {"model": "dmhy_rss_interval_seconds", "label": "DMHY RSS请求最小间隔（秒）", "type": "number", "placeholder": "5"}}]},
+                        {"component": "VCol", "props": {"cols": 12, "md": 12}, "content": [{"component": "VSwitch", "props": {"model": "dmhy_rss_use_proxy", "label": "DMHY RSS使用MoviePilot HTTP代理", "hint": "默认关闭并直连。仅提取BTIH并移除RSS tracker；仅在AniList动画身份、标题、季集、过滤器均通过后，才进入现有115离线待确认队列。"}}]},
                         {"component": "VCol", "props": {"cols": 12, "md": 3}, "content": [{"component": "VTextField", "props": {"model": "fourkmonitor_timeout", "label": "4K Monitor 请求超时（秒）", "type": "number", "placeholder": "20"}}]},
                         {"component": "VCol", "props": {"cols": 12, "md": 3}, "content": [{"component": "VTextField", "props": {"model": "fourkmonitor_max_candidates", "label": "单次最多免费候选数", "type": "number", "placeholder": "3"}}]},
                         {"component": "VCol", "props": {"cols": 12, "md": 3}, "content": [{"component": "VTextField", "props": {"model": "fourkmonitor_interval_seconds", "label": "请求最小间隔（秒）", "type": "number", "placeholder": "2"}}]},
@@ -285,6 +289,7 @@ class UIConfig:
             "seedhub_use_proxy": False,
             "fourkmonitor_enabled": True, "fourkmonitor_timeout": 20, "fourkmonitor_max_candidates": 3,
             "fourkmonitor_interval_seconds": 2, "fourkmonitor_use_proxy": False,
+            "dmhy_rss_enabled": False, "dmhy_rss_timeout": 20, "dmhy_rss_interval_seconds": 5, "dmhy_rss_use_proxy": False,
             "quark_enabled": False, "quark_timeout": 30, "quark_risk_cooldown": 1800,
             "quark_save_path": "/夸克接收/MoviePilot-TG/TV", "quark_movie_save_path": "/夸克接收/MoviePilot-TG/Movie",
             "strm_enabled": False, "smartstrm_webhook_url": "", "smartstrm_task": "tv,movie",

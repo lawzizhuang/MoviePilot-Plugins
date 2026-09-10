@@ -11,7 +11,8 @@ class SearchHandler:
 
     def __init__(self, telegram_client, telegram_enabled: bool = False, seedhub_client=None,
                  seedhub_enabled: bool = False, seedhub_channel: str = "seedhub_pro",
-                 fourkmonitor_client=None, fourkmonitor_enabled: bool = False, local_catalog=None) -> None:
+                 fourkmonitor_client=None, fourkmonitor_enabled: bool = False, local_catalog=None,
+                 dmhy_rss_client=None, dmhy_rss_enabled: bool = False) -> None:
         self._local_catalog = local_catalog
         self._telegram_client = telegram_client
         self._telegram_enabled = bool(telegram_enabled)
@@ -20,6 +21,8 @@ class SearchHandler:
         self._seedhub_channel = str(seedhub_channel or "seedhub_pro").strip()
         self._fourkmonitor_client = fourkmonitor_client
         self._fourkmonitor_enabled = bool(fourkmonitor_enabled)
+        self._dmhy_rss_client = dmhy_rss_client
+        self._dmhy_rss_enabled = bool(dmhy_rss_enabled)
 
     def get_enabled_sources(self) -> List[str]:
         if self._telegram_enabled and self._telegram_client and self._telegram_client.channels:
@@ -156,6 +159,19 @@ class SearchHandler:
         if resources:
             logger.info(f"4K Monitor/TMDB 免费候选：{len(resources)} 条")
         return resources
+
+    def search_dmhy_rss_resources(self, mediainfo, season, preferred_episodes=None):
+        """仅已具备AniList身份的动画TV可读取DMHY两个公开Feed。"""
+        if (not self._dmhy_rss_enabled or not self._dmhy_rss_client
+                or not getattr(mediainfo, 'anilist_id', None)
+                or getattr(self._dmhy_rss_client, 'blocked', False)):
+            return []
+        rows = []
+        for feed in ('anime', 'season_pack'):
+            rows.extend(self._dmhy_rss_client.list_feed(feed))
+            if getattr(self._dmhy_rss_client, 'blocked', False):
+                break
+        return rows
 
     @staticmethod
     def _fourkmonitor_episode_range(title: str, season: int) -> set[int]:

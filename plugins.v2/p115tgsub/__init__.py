@@ -15,7 +15,7 @@ from app.log import logger
 from app.plugins import _PluginBase
 from app.schemas.types import EventType, MediaType, NotificationType
 
-from .clients import FourKMonitorClient, P115ClientManager, QuarkShareClient, SeedHubClient, SmartStrmClient, TelegramWebClient
+from .clients import DMHYRSSClient, FourKMonitorClient, P115ClientManager, QuarkShareClient, SeedHubClient, SmartStrmClient, TelegramWebClient
 from .handlers import QuarkSyncHandler, SearchHandler, SubscribeHandler, SyncHandler
 from .ui import UIConfig
 
@@ -29,7 +29,7 @@ class P115TGSub(_PluginBase):
     plugin_name = "115 TG订阅追更"
     plugin_desc = "读取 MoviePilot 订阅，直接搜索 Telegram 公开频道中的 115/夸克分享资源并补齐缺失内容。"
     plugin_icon = "https://raw.githubusercontent.com/jxxghp/MoviePilot-Plugins/main/icons/cloud.png"
-    plugin_version = "2.4.14"
+    plugin_version = "2.4.15"
     plugin_author = "lawzizhuang"
     author_url = "https://github.com/lawzizhuang/MoviePilot-Plugins"
     plugin_config_prefix = "p115tgsub_"
@@ -80,9 +80,14 @@ class P115TGSub(_PluginBase):
     _fourkmonitor_max_candidates = 3
     _fourkmonitor_interval_seconds = 2
     _fourkmonitor_use_proxy = False
+    _dmhy_rss_enabled = False
+    _dmhy_rss_timeout = 20
+    _dmhy_rss_interval_seconds = 5
+    _dmhy_rss_use_proxy = False
     _quark_client = None
     _seedhub_client = None
     _fourkmonitor_client = None
+    _dmhy_rss_client = None
     _strm_client = None
     _sync_running = False
     _progress_repair_running = False
@@ -190,6 +195,10 @@ class P115TGSub(_PluginBase):
             config.get("fourkmonitor_interval_seconds", 2), 2, 1, 10
         )
         self._fourkmonitor_use_proxy = bool(config.get("fourkmonitor_use_proxy", False))
+        self._dmhy_rss_enabled = bool(config.get("dmhy_rss_enabled", False))
+        self._dmhy_rss_timeout = self._int_config(config.get("dmhy_rss_timeout", 20), 20, 5, 60)
+        self._dmhy_rss_interval_seconds = self._int_config(config.get("dmhy_rss_interval_seconds", 5), 5, 2, 60)
+        self._dmhy_rss_use_proxy = bool(config.get("dmhy_rss_use_proxy", False))
         try:
             self._init_clients()
             self._init_handlers()
@@ -204,6 +213,7 @@ class P115TGSub(_PluginBase):
             self._quark_client = None
             self._seedhub_client = None
             self._fourkmonitor_client = None
+            self._dmhy_rss_client = None
             self._strm_client = None
             return
 
@@ -285,6 +295,11 @@ class P115TGSub(_PluginBase):
             max_candidates=self._fourkmonitor_max_candidates,
             min_interval_seconds=self._fourkmonitor_interval_seconds,
         ) if self._fourkmonitor_enabled else None
+        self._dmhy_rss_client = DMHYRSSClient(
+            proxy=proxy if self._dmhy_rss_use_proxy else None,
+            timeout=self._dmhy_rss_timeout,
+            min_interval_seconds=self._dmhy_rss_interval_seconds,
+        ) if self._dmhy_rss_enabled else None
         cookies = self._resolve_p115_cookie()
         if cookies:
             self._p115_manager = P115ClientManager(cookies=cookies)
@@ -319,6 +334,7 @@ class P115TGSub(_PluginBase):
             self._telegram_client, self._telegram_enabled, self._seedhub_client,
             self._seedhub_enabled, self._seedhub_channel,
             self._fourkmonitor_client, self._fourkmonitor_enabled, self._local_catalog,
+            self._dmhy_rss_client, self._dmhy_rss_enabled,
         )
         self._subscribe_handler = SubscribeHandler()
         self._sync_handler = SyncHandler(
@@ -447,6 +463,10 @@ class P115TGSub(_PluginBase):
             "fourkmonitor_max_candidates": self._fourkmonitor_max_candidates,
             "fourkmonitor_interval_seconds": self._fourkmonitor_interval_seconds,
             "fourkmonitor_use_proxy": self._fourkmonitor_use_proxy,
+            "dmhy_rss_enabled": self._dmhy_rss_enabled,
+            "dmhy_rss_timeout": self._dmhy_rss_timeout,
+            "dmhy_rss_interval_seconds": self._dmhy_rss_interval_seconds,
+            "dmhy_rss_use_proxy": self._dmhy_rss_use_proxy,
         }
 
     def stop_service(self) -> None:
@@ -564,6 +584,8 @@ class P115TGSub(_PluginBase):
             self._seedhub_client.begin_run()
         if self._fourkmonitor_client:
             self._fourkmonitor_client.begin_run()
+        if self._dmhy_rss_client:
+            self._dmhy_rss_client.begin_run()
         if self._p115_manager:
             self._p115_manager.begin_run()
         if self._sync_handler:
@@ -579,7 +601,8 @@ class P115TGSub(_PluginBase):
 
         telegram_ready = bool(self._telegram_enabled and self._telegram_client and self._telegram_client.channels)
         fourkmonitor_ready = bool(self._fourkmonitor_enabled and self._fourkmonitor_client)
-        if not telegram_ready and not fourkmonitor_ready and not self._local_catalog:
+        dmhy_rss_ready = bool(self._dmhy_rss_enabled and self._dmhy_rss_client)
+        if not telegram_ready and not fourkmonitor_ready and not dmhy_rss_ready and not self._local_catalog:
             logger.error("未配置 Telegram、4K Monitor 或本地资源表，无法执行订阅追更")
             self._finish_run_status(result="失败", error="未配置可用搜索源")
             return False

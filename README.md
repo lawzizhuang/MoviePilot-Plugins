@@ -61,10 +61,17 @@ p115client==0.0.9.6.5.1
 ```text
 插件 ID：P115TGSub
 目录：plugins.v2/p115tgsub/
-版本：2.4.14
+版本：2.4.15
 ```
 
 面向“资源直接发布在 Telegram 公开频道”及 4K Monitor 匿名免费资源的订阅追更场景。插件自行访问 Telegram 公开搜索页和按 TMDB ID 的 4K Monitor 公开资源页，不调用 CloudSaver API，也不保存 CloudSaver 的地址、JWT 或账号密码。
+
+### v2.4.15
+
+- 新增默认关闭的DMHY动漫RSS补充源：仅AniList已识别动画TV，在既有Telegram、4K Monitor、SeedHub离线候选之后尝试。
+- 每轮最多读取动画与季度全集RSS各一次，仅保留最小BTIH、移除RSS tracker；403、429、5xx和XML异常熔断当轮。
+- 严格校验主名／原名、目标季、明确集数覆盖及订阅过滤器；拒绝OVA、剧场版、漫画、CD、OST、游戏等混合包。仅115目标目录真实文件确认后更新订阅。
+- 需先开启“115离线下载”和DMHY开关，并保持测试模式验收；磁力熊仍在功能分支研究，未发布。
 
 ### v2.4.14
 
