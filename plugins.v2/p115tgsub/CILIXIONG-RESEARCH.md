@@ -30,7 +30,7 @@
 - 动画近期更新：`/topics/rss/rss.xml?keyword=&sort_id=2&team_id=0&order=date-desc`；频道标题为“動畫-動漫花園資源網”，用于单集追更候选。
 - 季度全集：`/topics/rss/rss.xml?keyword=&sort_id=31&team_id=0&order=date-desc`；频道标题为“季度全集-動漫花園資源網”，季／集范围标记密度更高，用于严格的整季补档候选。
 
-两个Feed的`enclosure`均为直接BTIH磁力，但原始磁力携带大量不受控tracker。`clients/dmhy_rss.py`仅提取infohash并重建最小磁力，单轮每个Feed缓存一次，限制XML大小与条目数，异常、403、429、5xx熔断。v2.4.15已将它作为默认关闭的离线补充源接入：只在Telegram直链、4K Monitor和SeedHub均未提交时，对具有AniList身份的TV动画尝试；提交后仍由既有待确认队列及实际目录文件决定订阅状态。
+两个Feed的`enclosure`均为直接BTIH磁力，但原始磁力携带大量不受控tracker。`clients/dmhy_rss.py`仅提取infohash并重建最小磁力，单轮每个Feed缓存一次，限制XML大小与条目数，异常、403、429、5xx熔断。v2.4.16已将它作为默认关闭的离线补充源接入：只在Telegram直链、4K Monitor和SeedHub均未提交时，对具有AniList身份的TV动画尝试；优先用主名及原名构造作品级RSS请求，命中后不再读取滚动Feed，未命中才回退。每轮请求预算默认6；提交后仍由既有待确认队列及实际目录文件决定订阅状态。
 
 季度全集可能含OVA、剧场版、漫画、CD、游戏、混合大包及非影视资源；已接入路径要求主名或原名、目标季、集数覆盖、排除词及订阅过滤器均通过才考虑115离线。不能因出现`合集`、`Fin`或范围文本自动提交，也不能用S01包补S02。磁力熊继续保留为一般电影／剧集补充源，两者不互相替换。
 

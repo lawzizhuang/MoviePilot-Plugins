@@ -44,6 +44,15 @@ def test_cache_and_limits():
     except ValueError: pass
     else: raise AssertionError('超大正文不得解析')
 
+def test_keyword_budget_url_and_cache():
+    client = Client(max_keyword_queries_per_run=1); client._pace = lambda: None
+    client._session = Session([Response(200, XML)])
+    assert len(client.search_keyword(' 地狱 模式 ')) == 1
+    assert 'keyword=%E5%9C%B0%E7%8B%B1+%E6%A8%A1%E5%BC%8F' in client._session.calls[0]
+    assert len(client.search_keyword('地狱 模式')) == 1 and len(client._session.calls) == 1
+    assert client.search_keyword('另一个标题') == [] and len(client._session.calls) == 1
+
+
 def test_status_and_xml_failure_trip_circuit():
     client = Client(); client._pace = lambda: None; client._session = Session([Response(429)])
     assert client.list_feed('anime') == [] and client.blocked
@@ -53,5 +62,6 @@ def test_status_and_xml_failure_trip_circuit():
 if __name__ == '__main__':
     test_parse_minimizes_and_deduplicates()
     test_cache_and_limits()
+    test_keyword_budget_url_and_cache()
     test_status_and_xml_failure_trip_circuit()
     print('dmhy rss client tests: OK')

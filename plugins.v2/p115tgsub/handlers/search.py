@@ -166,9 +166,21 @@ class SearchHandler:
                 or not getattr(mediainfo, 'anilist_id', None)
                 or getattr(self._dmhy_rss_client, 'blocked', False)):
             return []
-        rows = []
+        rows, seen = [], set()
+        # 作品级RSS优先：可覆盖滚动Feed之外的早期单集和整季包；最多主名、原名各一次。
+        for title in (getattr(mediainfo, 'title', ''), getattr(mediainfo, 'original_title', '')):
+            for resource in self._dmhy_rss_client.search_keyword(title):
+                if resource.get('btih') not in seen:
+                    seen.add(resource.get('btih'))
+                    rows.append(resource)
+            if rows or getattr(self._dmhy_rss_client, 'blocked', False):
+                return rows
+        # 未命中时才读两个滚动Feed，避免每部订阅固定增加两次请求。
         for feed in ('anime', 'season_pack'):
-            rows.extend(self._dmhy_rss_client.list_feed(feed))
+            for resource in self._dmhy_rss_client.list_feed(feed):
+                if resource.get('btih') not in seen:
+                    seen.add(resource.get('btih'))
+                    rows.append(resource)
             if getattr(self._dmhy_rss_client, 'blocked', False):
                 break
         return rows

@@ -12,7 +12,7 @@ import time
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
-from urllib.parse import urlsplit
+from urllib.parse import urlencode, urlsplit
 
 import requests
 
@@ -28,7 +28,8 @@ class DMHYRSSClient:
     _BTIH_RE = re.compile(r'(?:[?&]xt=urn:btih:)([A-Za-z2-7]{32}|[A-Fa-f0-9]{40})(?:[&#]|$)', re.I)
     _TOPIC_RE = re.compile(r'^/topics/view/\d+_[A-Za-z0-9_.-]+\.html$', re.I)
 
-    def __init__(self, proxy: Any = None, timeout: int = 20, min_interval_seconds: int = 5) -> None:
+    def __init__(self, proxy: Any = None, timeout: int = 20, min_interval_seconds: int = 5,
+                 max_keyword_queries_per_run: int = 6) -> None:
         self.timeout = max(5, min(int(timeout or 20), 60))
         self.min_interval_seconds = max(2, min(int(min_interval_seconds or 5), 60))
         self._proxies = proxy if isinstance(proxy, dict) else ({'http': proxy, 'https': proxy} if proxy else None)
@@ -36,6 +37,8 @@ class DMHYRSSClient:
         self._session.headers.update({'User-Agent': 'Mozilla/5.0 (compatible; P115TGSub/2.x)', 'Accept': 'application/rss+xml, application/xml, text/xml'})
         self._last_request_at = 0.0
         self._blocked = False
+        self.max_keyword_queries_per_run = max(1, min(int(max_keyword_queries_per_run or 6), 20))
+        self._keyword_queries = 0
         self._cache: Dict[str, List[Dict[str, Any]]] = {}
 
     @property
@@ -44,6 +47,7 @@ class DMHYRSSClient:
 
     def begin_run(self) -> None:
         self._blocked = False
+        self._keyword_queries = 0
         self._cache.clear()
 
     def _pace(self) -> None:
@@ -97,15 +101,11 @@ class DMHYRSSClient:
                            'btih': key})
         return output
 
-    def list_feed(self, feed: str) -> List[Dict[str, Any]]:
-        """每轮缓存固定Feed；异常与访问受限时停止继续读取。"""
-        if feed not in {'anime', 'season_pack'}:
-            raise ValueError('未知DMHY RSS分类')
-        if feed in self._cache:
-            return list(self._cache[feed])
+    def _fetch(self, cache_key: str, path: str, feed: str) -> List[Dict[str, Any]]:
+        if cache_key in self._cache:
+            return list(self._cache[cache_key])
         if self._blocked:
             return []
-        path = self.ANIME_PATH if feed == 'anime' else self.SEASON_PACK_PATH
         self._pace()
         try:
             response = self._session.get(f'{self.BASE_URL}{path}', timeout=self.timeout, proxies=self._proxies)
@@ -125,6 +125,29 @@ class DMHYRSSClient:
             self._blocked = True
             logger.warning(f'DMHY RSS响应无效：{exc}，本轮停止请求')
             return []
-        self._cache[feed] = rows
+        self._cache[cache_key] = rows
         logger.info(f'DMHY RSS/{feed}：有效BTIH候选 {len(rows)} 条')
         return list(rows)
+
+    def search_keyword(self, keyword: str) -> List[Dict[str, Any]]:
+        """按作品名精确RSS检索；每轮全局限额，结果仅作后续本地严格核验。"""
+        keyword = ' '.join(str(keyword or '').split())
+        if not keyword or len(keyword) > 200 or self._blocked:
+            return []
+        key = f'keyword:{keyword.casefold()}'
+        if key not in self._cache and self._keyword_queries >= self.max_keyword_queries_per_run:
+            logger.info('DMHY RSS作品关键词请求已达本轮预算，保留至下轮')
+            return []
+        if key not in self._cache:
+            self._keyword_queries += 1
+        path = '/topics/rss/rss.xml?' + urlencode({
+            'keyword': keyword, 'sort_id': '0', 'team_id': '0', 'order': 'date-desc',
+        })
+        return self._fetch(key, path, 'keyword')
+
+    def list_feed(self, feed: str) -> List[Dict[str, Any]]:
+        """每轮缓存固定Feed；异常与访问受限时停止继续读取。"""
+        if feed not in {'anime', 'season_pack'}:
+            raise ValueError('未知DMHY RSS分类')
+        path = self.ANIME_PATH if feed == 'anime' else self.SEASON_PACK_PATH
+        return self._fetch(feed, path, feed)

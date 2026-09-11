@@ -29,7 +29,7 @@ class P115TGSub(_PluginBase):
     plugin_name = "115 TG订阅追更"
     plugin_desc = "读取 MoviePilot 订阅，直接搜索 Telegram 公开频道中的 115/夸克分享资源并补齐缺失内容。"
     plugin_icon = "https://raw.githubusercontent.com/jxxghp/MoviePilot-Plugins/main/icons/cloud.png"
-    plugin_version = "2.4.15"
+    plugin_version = "2.4.16"
     plugin_author = "lawzizhuang"
     author_url = "https://github.com/lawzizhuang/MoviePilot-Plugins"
     plugin_config_prefix = "p115tgsub_"
@@ -84,6 +84,7 @@ class P115TGSub(_PluginBase):
     _dmhy_rss_timeout = 20
     _dmhy_rss_interval_seconds = 5
     _dmhy_rss_use_proxy = False
+    _dmhy_rss_keyword_budget = 6
     _quark_client = None
     _seedhub_client = None
     _fourkmonitor_client = None
@@ -199,6 +200,7 @@ class P115TGSub(_PluginBase):
         self._dmhy_rss_timeout = self._int_config(config.get("dmhy_rss_timeout", 20), 20, 5, 60)
         self._dmhy_rss_interval_seconds = self._int_config(config.get("dmhy_rss_interval_seconds", 5), 5, 2, 60)
         self._dmhy_rss_use_proxy = bool(config.get("dmhy_rss_use_proxy", False))
+        self._dmhy_rss_keyword_budget = self._int_config(config.get("dmhy_rss_keyword_budget", 6), 6, 1, 20)
         try:
             self._init_clients()
             self._init_handlers()
@@ -299,6 +301,7 @@ class P115TGSub(_PluginBase):
             proxy=proxy if self._dmhy_rss_use_proxy else None,
             timeout=self._dmhy_rss_timeout,
             min_interval_seconds=self._dmhy_rss_interval_seconds,
+            max_keyword_queries_per_run=self._dmhy_rss_keyword_budget,
         ) if self._dmhy_rss_enabled else None
         cookies = self._resolve_p115_cookie()
         if cookies:
@@ -467,6 +470,7 @@ class P115TGSub(_PluginBase):
             "dmhy_rss_timeout": self._dmhy_rss_timeout,
             "dmhy_rss_interval_seconds": self._dmhy_rss_interval_seconds,
             "dmhy_rss_use_proxy": self._dmhy_rss_use_proxy,
+            "dmhy_rss_keyword_budget": self._dmhy_rss_keyword_budget,
         }
 
     def stop_service(self) -> None:
