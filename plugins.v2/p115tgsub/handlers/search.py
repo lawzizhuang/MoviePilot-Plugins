@@ -11,7 +11,8 @@ class SearchHandler:
 
     def __init__(self, telegram_client, telegram_enabled: bool = False, seedhub_client=None,
                  seedhub_enabled: bool = False, seedhub_channel: str = "seedhub_pro",
-                 fourkmonitor_client=None, fourkmonitor_enabled: bool = False, local_catalog=None) -> None:
+                 fourkmonitor_client=None, fourkmonitor_enabled: bool = False, local_catalog=None,
+                 dmhy_rss_client=None, dmhy_rss_enabled: bool = False) -> None:
         self._local_catalog = local_catalog
         self._telegram_client = telegram_client
         self._telegram_enabled = bool(telegram_enabled)
@@ -20,6 +21,8 @@ class SearchHandler:
         self._seedhub_channel = str(seedhub_channel or "seedhub_pro").strip()
         self._fourkmonitor_client = fourkmonitor_client
         self._fourkmonitor_enabled = bool(fourkmonitor_enabled)
+        self._dmhy_rss_client = dmhy_rss_client
+        self._dmhy_rss_enabled = bool(dmhy_rss_enabled)
 
     def get_enabled_sources(self) -> List[str]:
         if self._telegram_enabled and self._telegram_client and self._telegram_client.channels:
@@ -156,6 +159,31 @@ class SearchHandler:
         if resources:
             logger.info(f"4K Monitor/TMDB 免费候选：{len(resources)} 条")
         return resources
+
+    def search_dmhy_rss_resources(self, mediainfo, season, preferred_episodes=None):
+        """仅已具备AniList身份的动画TV可读取DMHY两个公开Feed。"""
+        if (not self._dmhy_rss_enabled or not self._dmhy_rss_client
+                or not getattr(mediainfo, 'anilist_id', None)
+                or getattr(self._dmhy_rss_client, 'blocked', False)):
+            return []
+        rows, seen = [], set()
+        # 作品级RSS优先：可覆盖滚动Feed之外的早期单集和整季包；最多主名、原名各一次。
+        for title in (getattr(mediainfo, 'title', ''), getattr(mediainfo, 'original_title', '')):
+            for resource in self._dmhy_rss_client.search_keyword(title):
+                if resource.get('btih') not in seen:
+                    seen.add(resource.get('btih'))
+                    rows.append(resource)
+            if rows or getattr(self._dmhy_rss_client, 'blocked', False):
+                return rows
+        # 未命中时才读两个滚动Feed，避免每部订阅固定增加两次请求。
+        for feed in ('anime', 'season_pack'):
+            for resource in self._dmhy_rss_client.list_feed(feed):
+                if resource.get('btih') not in seen:
+                    seen.add(resource.get('btih'))
+                    rows.append(resource)
+            if getattr(self._dmhy_rss_client, 'blocked', False):
+                break
+        return rows
 
     @staticmethod
     def _fourkmonitor_episode_range(title: str, season: int) -> set[int]:

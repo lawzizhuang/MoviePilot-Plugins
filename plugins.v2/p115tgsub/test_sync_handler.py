@@ -216,6 +216,15 @@ def test_tmdb_unreleased_metadata_never_blocks_episode_search_contract():
         assert "所有缺失剧集均未播出" not in source
 
 
+def test_dmhy_safety_rules():
+    assert SyncHandler._dmhy_episode_range('[Group] Example S02 | 01-12 [1080p]', 2) == set(range(1, 13))
+    assert SyncHandler._dmhy_episode_range('[Group] Example S01 | 01-12 [1080p]', 2) == set()
+    assert SyncHandler._dmhy_episode_range('[Group] Example - 10 [1080p]', 1) == {10}
+    assert SyncHandler._dmhy_episode_range('[Group] Example 01-12 [1080p]', 1) == set()
+    assert SyncHandler._dmhy_is_mixed_pack('TV动画+OVA+剧场版+漫画+CD')
+    assert not SyncHandler._dmhy_is_mixed_pack('Example S01 | 01-12 [1080p]')
+
+
 if __name__ == "__main__":
     test_single_character_title_is_not_removed_by_normalization()
     test_unrelated_single_character_title_is_rejected()
@@ -231,4 +240,5 @@ if __name__ == "__main__":
     test_sync_prioritizes_telegram_candidate_with_missing_episode()
     test_explicit_non_missing_single_episode_is_skipped_before_115_lookup()
     test_tmdb_unreleased_metadata_never_blocks_episode_search_contract()
+    test_dmhy_safety_rules()
     print("sync handler tests: OK")

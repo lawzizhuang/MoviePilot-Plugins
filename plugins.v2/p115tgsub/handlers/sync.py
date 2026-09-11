@@ -297,6 +297,71 @@ class SyncHandler:
             logger.info(f"{source_name} 已进入 115 离线下载待确认队列：{mediainfo.title}{target_desc}")
         return queued
 
+    @staticmethod
+    def _dmhy_episode_range(title: str, season: int) -> Set[int]:
+        """只接受明确目标季的单集或范围；季度包无季号时不猜测。"""
+        text = str(title or '')
+        if FileMatcher._contains_other_season(text, season) and not re.search(rf'\bS0?{season}\b|第\s*0?{season}\s*季', text, re.I):
+            return set()
+        season_markers = re.findall(r'(?:\bS(\d{1,2})(?!\d)|第\s*(\d{1,2})\s*季)', text, re.I)
+        values = {int(a or b) for a, b in season_markers}
+        if values and values != {season}:
+            return set()
+        if not values and season != 1:
+            return set()
+        match = re.search(r'(?:\||\[)\s*(\d{1,3})\s*[-~～至到]\s*(\d{1,3})(?!\d)', text)
+        if not match:
+            match = re.search(r'\bS(\d{1,2})E(\d{1,3})(?!\d)', text, re.I)
+            if match and int(match.group(1)) == season:
+                return {int(match.group(2))}
+        if match:
+            start, end = int(match.group(1)), int(match.group(2))
+            return set(range(start, end + 1)) if 1 <= start <= end <= 999 else set()
+        match = re.search(r'(?:\]|\||\s)-\s*(\d{1,3})\s*(?:\[|\(|$)', text)
+        return {int(match.group(1))} if match and 1 <= int(match.group(1)) <= 999 else set()
+
+    @staticmethod
+    def _dmhy_is_mixed_pack(title: str) -> bool:
+        return bool(re.search(r'\b(?:OVA|OAD|SP|PV|NCOP|NCED|OST|CD|Movie|Game)\b|剧场版|漫画|音频|音乐|游戏', str(title or ''), re.I))
+
+    def _submit_dmhy_rss_tv(self, subscribe, mediainfo: MediaInfo, save_dir: str, season: int,
+                            episodes: List[int], subscribe_filter: SubscribeFilter) -> bool:
+        """DMHY仅作为有AniList身份动画的保守补充源，提交后仍走待确认队列。"""
+        if not self._offline_enabled or not self._offline_queue:
+            return False
+        targets = set(episodes)
+        for resource in self._search_handler.search_dmhy_rss_resources(mediainfo, season, episodes):
+            title = str(resource.get('title') or '')
+            if self._dmhy_is_mixed_pack(title) or not self._resource_title_matches(mediainfo, title):
+                continue
+            if not resource_year_matches(mediainfo.year, title, title=mediainfo.title):
+                continue
+            if subscribe_filter and subscribe_filter.has_filters() and not subscribe_filter.match(title)[0]:
+                continue
+            covered = targets & self._dmhy_episode_range(title, season)
+            if not covered or not covered.issubset(self._dmhy_episode_range(title, season)):
+                continue
+            if self._offline_submitted_this_run >= self._offline_max_per_sync:
+                return False
+            magnet = str(resource.get('magnet') or '')
+            if not re.fullmatch(r'magnet:\?xt=urn:btih:[A-Za-z2-7]{32}|magnet:\?xt=urn:btih:[A-Fa-f0-9]{40}', magnet):
+                continue
+            if self._dry_run:
+                logger.info(f'测试模式：DMHY RSS候选已验证：{mediainfo.title} S{season:02d} 覆盖{len(covered)}集，不提交115离线')
+                return True
+            if not self._p115_manager.submit_offline_task(magnet, save_dir):
+                continue
+            queued = self._offline_queue.enqueue_many(
+                subscribe_id=subscribe.id, title=mediainfo.title, year=mediainfo.year, media_type='电视剧',
+                savepath=save_dir, resource_key=self._p115_manager.offline_resource_key(magnet), file_name=title,
+                season=season, episodes=covered,
+            )
+            if queued:
+                self._offline_submitted_this_run += 1
+                logger.info(f'DMHY RSS已进入115离线待确认队列：{mediainfo.title} S{season:02d} {len(covered)}集')
+                return True
+        return False
+
     def _submit_fourkmonitor_movie(self, subscribe, mediainfo: MediaInfo, save_dir: str,
                                    subscribe_filter: SubscribeFilter) -> bool:
         for resource in self._search_handler.search_fourkmonitor_resources(mediainfo, MediaType.MOVIE):
@@ -571,25 +636,26 @@ class SyncHandler:
     @staticmethod
     def _resource_title_matches(mediainfo: MediaInfo, resource_title: str) -> bool:
         """仅接受消息文本明确包含当前订阅标题的候选，避免搜索页模糊命中。"""
-        title = str(getattr(mediainfo, "title", "") or "").strip()
         text = str(resource_title or "").strip()
-        if not title or not text:
+        if not text:
             return False
 
         def compact(value: str) -> str:
             normalized = unicodedata.normalize("NFKC", value).casefold()
             return re.sub(r"[\s\W_]+", "", normalized)
 
-        expected = compact(title)
         actual = compact(text)
-        if len(expected) >= 2 and expected in actual:
-            return True
-
-        # 单字剧名不参与 compact 后“至少两字符”的快速路径，
-        # 改在 NFKC 标准化原文中做字面匹配。
-        normalized_title = unicodedata.normalize("NFKC", title).casefold()
-        normalized_text = unicodedata.normalize("NFKC", text).casefold()
-        return len(normalized_title) == 1 and normalized_title in normalized_text
+        # RSS常使用原文名；仅使用已由MoviePilot确认的主名及原名，不扩展模糊别名。
+        for value in (getattr(mediainfo, "title", ""), getattr(mediainfo, "original_title", "")):
+            title = str(value or "").strip()
+            expected = compact(title)
+            if len(expected) >= 2 and expected in actual:
+                return True
+            normalized_title = unicodedata.normalize("NFKC", title).casefold()
+            normalized_text = unicodedata.normalize("NFKC", text).casefold()
+            if len(normalized_title) == 1 and normalized_title in normalized_text:
+                return True
+        return False
 
     def process_movie_subscribe(
         self,
@@ -1167,9 +1233,13 @@ class SyncHandler:
                             subscribe, mediainfo, save_dir, season, missing_episodes, subscribe_filter
                         ) else 0
                         if not submitted:
-                            self._submit_seedhub_tv(
+                            submitted = 1 if self._submit_seedhub_tv(
                                 subscribe, mediainfo, save_dir, season, missing_episodes, subscribe_filter
-                            )
+                            ) else 0
+                        if not submitted:
+                            submitted = 1 if self._submit_dmhy_rss_tv(
+                                subscribe, mediainfo, save_dir, season, missing_episodes, subscribe_filter
+                            ) else 0
                     if submitted:
                         action = "已验证" if self._dry_run else "已提交"
                         logger.info(
@@ -1437,6 +1507,10 @@ class SyncHandler:
                         subscribe, mediainfo, save_dir, season, missing_episodes, subscribe_filter
                     ):
                         logger.info(f"[{source.upper()}] 已提交 SeedHub 115 离线下载任务，等待目标目录文件确认")
+                    elif self._submit_dmhy_rss_tv(
+                        subscribe, mediainfo, save_dir, season, missing_episodes, subscribe_filter
+                    ):
+                        logger.info(f"[{source.upper()}] 已提交 DMHY RSS 115 离线下载任务，等待目标目录文件确认")
 
                 if missing_episodes:
                     remaining_sources = enabled_sources[source_index + 1:]
