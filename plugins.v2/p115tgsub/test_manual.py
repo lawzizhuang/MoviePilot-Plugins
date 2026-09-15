@@ -98,6 +98,10 @@ def test_authorization():
     for name in ['manual_test', 'manual_test.handlers']:
         sys.modules[name] = types.ModuleType(name)
     sys.modules['manual_test.handlers.manual'] = manual
+    batch_spec = importlib.util.spec_from_file_location('manual_test.handlers.manual_batch', Path(__file__).parent/'handlers/manual_batch.py')
+    batch = importlib.util.module_from_spec(batch_spec)
+    batch_spec.loader.exec_module(batch)
+    sys.modules[batch_spec.name] = batch
     exec(compile(ast.Module(body=[method], type_ignores=[]), '<remote_manual>', 'exec'), scope)
     plugin = types.SimpleNamespace(_bot_transfer_users='123', _enabled=True,
                                   _bot_transfer_enabled=True, _sync_running=True,

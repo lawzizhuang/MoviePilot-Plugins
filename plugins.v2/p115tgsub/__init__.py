@@ -29,7 +29,7 @@ class P115TGSub(_PluginBase):
     plugin_name = "115 TG订阅追更"
     plugin_desc = "读取 MoviePilot 订阅，直接搜索 Telegram 公开频道中的 115/夸克分享资源并补齐缺失内容。"
     plugin_icon = "https://raw.githubusercontent.com/jxxghp/MoviePilot-Plugins/main/icons/cloud.png"
-    plugin_version = "2.4.16"
+    plugin_version = "2.4.17"
     plugin_author = "lawzizhuang"
     author_url = "https://github.com/lawzizhuang/MoviePilot-Plugins"
     plugin_config_prefix = "p115tgsub_"
@@ -895,11 +895,12 @@ class P115TGSub(_PluginBase):
         if not self._enabled or not self._bot_transfer_enabled:
             reply("请先启用插件及Bot手动转存。")
             return
-        from .handlers.manual import parse_link, run_manual, run_offline, ManualInputError
+        from .handlers.manual import ManualInputError
+        from .handlers.manual_batch import parse_batch, run_batch
         try:
-            url = parse_link(data.get("arg_str"))
-        except ValueError:
-            reply("用法：/tv 或 /movie 后接一条115分享、ED2K文件或BTIH磁力链接（可无名称）；空格须URL编码。")
+            links = parse_batch(data.get("arg_str"))
+        except ManualInputError as exc:
+            reply(str(exc))
             return
         with run_state_lock:
             if self._sync_running or self._progress_repair_running:
@@ -917,19 +918,10 @@ class P115TGSub(_PluginBase):
                         reply("115读取已熔断，本次不执行。")
                         return
                     kind = "tv" if data["action"] == "p115_manual_tv" else "movie"
-                    if url.lower().startswith(('ed2k:', 'magnet:')):
-                        reply(run_offline(
-                            manager, url, kind,
-                            self._save_path if kind == 'tv' else self._movie_save_path,
-                            self._dry_run, list(self.get_data('manual_offline_submitted') or []),
-                            lambda records: self.save_data('manual_offline_submitted', records),
-                        ))
-                        return
-                    reply(run_manual(manager, url, kind,
-                                     self._save_path if kind == "tv" else self._movie_save_path,
-                                     self._dry_run, self._max_transfer_per_sync, self._batch_size,
-                                     list(self.get_data('manual_share_submitted') or []),
-                                     lambda records: self.save_data('manual_share_submitted', records)))
+                    reply(run_batch(manager, links, kind,
+                                    self._save_path if kind == 'tv' else self._movie_save_path,
+                                    self._dry_run, self._max_transfer_per_sync, self._batch_size,
+                                    self.get_data, self.save_data))
             except ManualInputError as exc:
                 reply(str(exc))
             except Exception as exc:
@@ -939,7 +931,7 @@ class P115TGSub(_PluginBase):
                 with run_state_lock:
                     self._sync_running = False
         try:
-            reply("已接收，正在读取与核验分享。")
+            reply(f"已接收{len(links)}条链接，将串行处理；请勿重复发送。")
             Thread(target=work, name="P115ManualTransfer", daemon=True).start()
         except Exception:
             with run_state_lock:

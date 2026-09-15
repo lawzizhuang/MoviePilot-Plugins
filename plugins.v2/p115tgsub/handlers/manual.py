@@ -84,13 +84,13 @@ def run_offline(manager, url, kind, root, dry_run, submitted, save_submitted):
     return f'离线任务已提交至 {path}。尚未确认下载完成；识别与整理由外部监控负责，未修改订阅。'
 
 
-def run_manual(manager, url, kind, root, dry_run, limit, batch_size, submitted, save_submitted):
+def run_manual(manager, url, kind, root, dry_run, limit, batch_size, submitted, save_submitted, *, checked_status=None):
     """仅列分享顶层并转存顶层项目，保留目录结构，不调用媒体识别。"""
     path = _target(kind, root)
     info = manager.extract_share_info(url)
     key = 'share:' + str(info.get('share_code') or '') + ':' + str(info.get('receive_code') or '')
     token = _dedup(manager, key, path, submitted)
-    status = manager.check_share_status(url)
+    status = checked_status if checked_status is not None else manager.check_share_status(url)
     if not status.is_valid:
         raise ManualInputError('分享无法访问或暂时不能核验，未执行转存。')
     items = manager.list_share_files(url, max_depth=1)
